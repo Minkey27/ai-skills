@@ -119,6 +119,90 @@ def changed_line_ranges(repo: Path, merge_base: str, path: str) -> list[tuple[in
     return ranges
 
 
+@dataclass
+class DiffHunk:
+    """A single @@ hunk parsed from `git diff` output.
+
+    `lines` is a list of (marker, text) pairs where marker is one of
+    ' ' (context), '+' (added), '-' (removed), or '\\' (no-newline marker).
+    `new_start`/`new_count` are inclusive of any leading/trailing context the
+    `--unified=<n>` setting added — so the new-side range is suitable for
+    overlap checks against test line ranges.
+    """
+
+    old_start: int
+    old_count: int
+    new_start: int
+    new_count: int
+    lines: list[tuple[str, str]] = field(default_factory=list)
+
+    @property
+    def new_range(self) -> tuple[int, int]:
+        if self.new_count <= 0:
+            # Pure deletion: anchor at new_start so it can still attach to a
+            # test whose body straddles the deleted region.
+            return (self.new_start, self.new_start)
+        return (self.new_start, self.new_start + self.new_count - 1)
+
+    @property
+    def header(self) -> str:
+        return (
+            f"@@ -{self.old_start},{self.old_count} "
+            f"+{self.new_start},{self.new_count} @@"
+        )
+
+
+def parse_diff_hunks(
+    repo: Path, merge_base: str, path: str, context: int = 3
+) -> list[DiffHunk]:
+    """Parse `git diff --unified=<context>` for `path` into structured hunks."""
+    diff = _git_or_none(
+        ["diff", f"--unified={context}", merge_base, "HEAD", "--", path],
+        cwd=repo,
+    )
+    if not diff:
+        return []
+
+    def _parse_spec(spec: str) -> tuple[int, int]:
+        if "," in spec:
+            a, b = spec.split(",", 1)
+            return int(a), int(b)
+        return int(spec), 1
+
+    hunks: list[DiffHunk] = []
+    current: DiffHunk | None = None
+    in_body = False
+    for line in diff.splitlines():
+        if line.startswith("@@"):
+            # @@ -a,b +c,d @@ optional context
+            try:
+                _, rest = line.split("-", 1)
+                old_spec, after = rest.split(" +", 1)
+                new_spec = after.split(" @@", 1)[0]
+                old_start, old_count = _parse_spec(old_spec.strip())
+                new_start, new_count = _parse_spec(new_spec.strip())
+            except (IndexError, ValueError):
+                in_body = False
+                continue
+            if current is not None:
+                hunks.append(current)
+            current = DiffHunk(old_start, old_count, new_start, new_count, [])
+            in_body = True
+            continue
+        if not in_body or current is None:
+            continue
+        if not line:
+            # Blank line inside a hunk represents an empty context line.
+            current.lines.append((" ", ""))
+            continue
+        marker = line[0]
+        if marker in (" ", "+", "-", "\\"):
+            current.lines.append((marker, line[1:]))
+    if current is not None:
+        hunks.append(current)
+    return hunks
+
+
 # ----------------------------- test discovery -----------------------------
 
 
@@ -200,6 +284,7 @@ class FileBucket:
     file: str
     is_new: bool
     tests: list[TestEntry] = field(default_factory=list)
+    hunks: list[DiffHunk] = field(default_factory=list)
 
 
 def collect(
@@ -219,19 +304,26 @@ def collect(
             continue
 
         is_new = not file_in_base(repo, merge_base, path)
+        # Hunks are only useful for modified files; for new files the full
+        # source already represents the change.
+        file_hunks = (
+            [] if is_new else parse_diff_hunks(repo, merge_base, path, context=3)
+        )
         if is_new or include_all_in_changed_files:
             chosen = all_tests
         else:
-            hunks = changed_line_ranges(repo, merge_base, path)
-            if not hunks:
+            hunk_ranges = changed_line_ranges(repo, merge_base, path)
+            if not hunk_ranges:
                 continue
             chosen = [
                 t
                 for t in all_tests
-                if any(overlaps((t.start_line, t.end_line), h) for h in hunks)
+                if any(overlaps((t.start_line, t.end_line), h) for h in hunk_ranges)
             ]
         if chosen:
-            buckets.append(FileBucket(file=path, is_new=is_new, tests=chosen))
+            buckets.append(
+                FileBucket(file=path, is_new=is_new, tests=chosen, hunks=file_hunks)
+            )
 
     buckets.sort(key=lambda b: b.file)
     return buckets
@@ -762,6 +854,120 @@ pre.with-lineno > code {
 .codeblock pre code:not(.hljs) { color: var(--code-fg); }
 
 /* ============================================================
+   Diff block (collapsible)
+   ============================================================ */
+details.diff-toggle {
+  margin-bottom: 12px;
+  border: 1px solid var(--code-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--code-bg);
+  box-shadow: var(--code-shadow);
+}
+details.diff-toggle > summary.diff-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  background: var(--code-gutter-bg);
+  font-family: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+details.diff-toggle[open] > summary.diff-summary {
+  border-bottom: 1px solid var(--code-border);
+}
+details.diff-toggle > summary.diff-summary::-webkit-details-marker { display: none; }
+details.diff-toggle > summary.diff-summary:hover { background: var(--surface-hover); }
+.diff-summary-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.diff-summary-meta { color: var(--text-faint); }
+.diff-summary-meta .diff-stat-add {
+  color: var(--badge-new-fg);
+  font-weight: 600;
+}
+.diff-summary-meta .diff-stat-del {
+  color: var(--badge-nodoc-fg);
+  font-weight: 600;
+}
+.diff-block { background: var(--code-bg); }
+.diff-hunk + .diff-hunk { border-top: 1px solid var(--code-border); }
+.diff-hunk-header {
+  background: var(--code-gutter-bg);
+  color: var(--text-muted);
+  padding: 4px 14px;
+  font-family: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  border-bottom: 1px solid var(--code-border);
+  user-select: none;
+}
+.diff-line {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  padding: 0;
+  font-family: ui-monospace, "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+  font-variant-ligatures: none;
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre;
+}
+.diff-line .diff-mark {
+  text-align: center;
+  user-select: none;
+  color: var(--text-faint);
+  border-right: 1px solid var(--code-gutter-border);
+  background: var(--code-gutter-bg);
+}
+.diff-line .diff-text { padding: 0 12px; white-space: pre; }
+
+.diff-line.diff-add { background: rgba(46, 160, 67, 0.10); }
+.diff-line.diff-add .diff-mark {
+  color: var(--badge-new-fg);
+  background: color-mix(in srgb, var(--badge-new-bg) 80%, transparent);
+}
+.diff-line.diff-add .diff-text { color: var(--badge-new-fg); }
+
+.diff-line.diff-del { background: rgba(248, 81, 73, 0.10); }
+.diff-line.diff-del .diff-mark {
+  color: var(--badge-nodoc-fg);
+  background: color-mix(in srgb, var(--badge-nodoc-bg) 80%, transparent);
+}
+.diff-line.diff-del .diff-text { color: var(--badge-nodoc-fg); }
+
+.diff-line.diff-meta {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+:root[data-theme="dark"] .diff-line.diff-add { background: rgba(46, 160, 67, 0.18); }
+:root[data-theme="dark"] .diff-line.diff-del { background: rgba(248, 81, 73, 0.18); }
+
+.diff-notice {
+  margin-bottom: 12px;
+  padding: 9px 14px;
+  background: var(--surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.diff-notice strong {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+}
+
+/* ============================================================
    Misc
    ============================================================ */
 .hidden { display: none !important; }
@@ -841,6 +1047,7 @@ JS = r"""
   const onlyNoDoc = document.getElementById('only-no-doc');
   const expandAll = document.getElementById('expand-all');
   const collapseAll = document.getElementById('collapse-all');
+  const toggleDiffsBtn = document.getElementById('toggle-diffs');
   const themeBtn = document.getElementById('theme-toggle');
   const themeLabel = document.getElementById('theme-label');
   const toast = document.getElementById('toast');
@@ -920,15 +1127,53 @@ JS = r"""
   }
 
   function setAll(open) {
-    for (const d of document.querySelectorAll('details')) {
+    // "Expand all" deliberately skips diff toggles — diffs are opt-in and
+    // would otherwise dominate the view. "Collapse all" still closes them so
+    // a single button can fully reset the page.
+    const selector = open ? 'details:not(.diff-toggle)' : 'details';
+    for (const d of document.querySelectorAll(selector)) {
       d.open = open;
     }
+    if (!open) updateDiffsLabel();
+  }
+
+  function setAllDiffs(open) {
+    for (const d of document.querySelectorAll('details.diff-toggle')) {
+      d.open = open;
+    }
+    updateDiffsLabel();
+  }
+
+  function updateDiffsLabel() {
+    if (!toggleDiffsBtn) return;
+    const diffs = document.querySelectorAll('details.diff-toggle');
+    if (!diffs.length) {
+      toggleDiffsBtn.disabled = true;
+      toggleDiffsBtn.textContent = 'No diffs';
+      return;
+    }
+    const anyOpen = Array.from(diffs).some((d) => d.open);
+    toggleDiffsBtn.textContent = anyOpen ? 'Hide diffs' : 'Show diffs';
   }
 
   search.addEventListener('input', applyFilters);
   onlyNoDoc.addEventListener('change', applyFilters);
   expandAll.addEventListener('click', () => setAll(true));
   collapseAll.addEventListener('click', () => setAll(false));
+  if (toggleDiffsBtn) {
+    toggleDiffsBtn.addEventListener('click', () => {
+      const diffs = document.querySelectorAll('details.diff-toggle');
+      const anyClosed = Array.from(diffs).some((d) => !d.open);
+      setAllDiffs(anyClosed); // if any are closed, open all; otherwise close all
+    });
+    // Keep the label in sync when users open diffs individually.
+    document.addEventListener('toggle', (e) => {
+      if (e.target && e.target.classList && e.target.classList.contains('diff-toggle')) {
+        updateDiffsLabel();
+      }
+    }, true);
+    updateDiffsLabel();
+  }
 
   // ---- Copy buttons --------------------------------------------------
   function showToast(msg) {
@@ -986,6 +1231,8 @@ JS = r"""
       setAll(true);
     } else if (e.key.toLowerCase() === 'c') {
       setAll(false);
+    } else if (e.key.toLowerCase() === 'd') {
+      if (toggleDiffsBtn) toggleDiffsBtn.click();
     }
   });
 
@@ -1034,7 +1281,68 @@ def _render_code_block(source: str, start_line: int, end_line: int) -> str:
             </div>"""
 
 
-def render_test(t: TestEntry) -> str:
+_DIFF_MARKER_CLASSES = {
+    "+": "diff-add",
+    "-": "diff-del",
+    " ": "diff-ctx",
+    "\\": "diff-meta",
+}
+
+
+def _render_diff_hunks(hunks: list[DiffHunk]) -> str:
+    """Render a list of diff hunks into a collapsible styled diff block.
+
+    Wrapped in a `<details class="diff-toggle">` so the diff is collapsed by
+    default and `Expand all` can skip it (see JS in `JS`). Empty input returns
+    an empty string so callers can decide whether to emit a placeholder.
+    """
+    if not hunks:
+        return ""
+    adds = sum(1 for h in hunks for m, _ in h.lines if m == "+")
+    dels = sum(1 for h in hunks for m, _ in h.lines if m == "-")
+    n_hunks = len(hunks)
+    summary_meta = (
+        f'{n_hunks} hunk{"" if n_hunks == 1 else "s"} · '
+        f'<span class="diff-stat-add">+{adds}</span> '
+        f'<span class="diff-stat-del">−{dels}</span>'
+    )
+
+    hunks_html_parts: list[str] = []
+    for h in hunks:
+        line_parts: list[str] = []
+        for marker, text in h.lines:
+            cls = _DIFF_MARKER_CLASSES.get(marker, "diff-ctx")
+            shown = marker if marker != " " else " "
+            line_parts.append(
+                f'<div class="diff-line {cls}">'
+                f'<span class="diff-mark">{_e(shown)}</span>'
+                f'<span class="diff-text">{_e(text) if text else "&nbsp;"}</span>'
+                "</div>"
+            )
+        hunks_html_parts.append(
+            f'<div class="diff-hunk">'
+            f'<div class="diff-hunk-header">{_e(h.header)}</div>'
+            f'{"".join(line_parts)}'
+            "</div>"
+        )
+
+    return f"""<details class="diff-toggle">
+              <summary class="diff-summary">
+                <span class="caret"></span>
+                <span class="diff-summary-label">Diff</span>
+                <span class="diff-summary-meta">{summary_meta}</span>
+              </summary>
+              <div class="diff-block">
+                {"".join(hunks_html_parts)}
+              </div>
+            </details>"""
+
+
+def render_test(
+    t: TestEntry,
+    file_hunks: list[DiffHunk] | None = None,
+    is_new_file: bool = False,
+) -> str:
     summary_doc = ""
     desc_class = "test-desc empty"
     desc_text = "— no docstring —"
@@ -1058,6 +1366,29 @@ def render_test(t: TestEntry) -> str:
         if t.end_line == t.start_line
         else f"L{t.start_line}–{t.end_line}"
     )
+
+    # Pick the hunks whose new-file range overlaps with this test's body.
+    if is_new_file:
+        diff_block = (
+            '<div class="diff-notice"><strong>Diff</strong>'
+            "This test lives in a newly added file — the full source below "
+            "is the change.</div>"
+        )
+    else:
+        relevant_hunks = [
+            h
+            for h in (file_hunks or [])
+            if overlaps(h.new_range, (t.start_line, t.end_line))
+        ]
+        if relevant_hunks:
+            diff_block = _render_diff_hunks(relevant_hunks)
+        else:
+            diff_block = (
+                '<div class="diff-notice"><strong>Diff</strong>'
+                "No diff hunks overlap this test (it was included via "
+                "<code>--include-all</code>).</div>"
+            )
+
     return f"""
         <details class="test" data-name="{_e(t.name)}" data-hasdoc="{has_doc}" data-search="{_e(search_hay)}">
           <summary>
@@ -1068,14 +1399,23 @@ def render_test(t: TestEntry) -> str:
           </summary>
           <div class="test-body">
             {doc_block}
+            {diff_block}
             {_render_code_block(t.source, t.start_line, t.end_line)}
           </div>
         </details>
     """
 
 
-def render_class_group(cls: str | None, entries: list[TestEntry]) -> str:
-    tests_html = "".join(render_test(t) for t in entries)
+def render_class_group(
+    cls: str | None,
+    entries: list[TestEntry],
+    file_hunks: list[DiffHunk] | None = None,
+    is_new_file: bool = False,
+) -> str:
+    tests_html = "".join(
+        render_test(t, file_hunks=file_hunks, is_new_file=is_new_file)
+        for t in entries
+    )
     if cls is None:
         header = '<span class="module-label">module-level tests</span>'
     else:
@@ -1100,7 +1440,15 @@ def render_file(bucket: FileBucket) -> str:
     for t in bucket.tests:
         groups.setdefault(t.cls, []).append(t)
     ordered_keys = sorted(groups.keys(), key=lambda k: (k is None, (k or "").lower()))
-    groups_html = "".join(render_class_group(k, groups[k]) for k in ordered_keys)
+    groups_html = "".join(
+        render_class_group(
+            k,
+            groups[k],
+            file_hunks=bucket.hunks,
+            is_new_file=bucket.is_new,
+        )
+        for k in ordered_keys
+    )
     badge = (
         '<span class="badge new">new file</span>'
         if bucket.is_new
@@ -1196,8 +1544,9 @@ def render_page(
   <input type="search" id="search" class="input" autocomplete="off" spellcheck="false"
          placeholder="Search test name, class, file, docstring, or code…">
   <label class="check"><input type="checkbox" id="only-no-doc"> Only without docstring</label>
-  <button id="expand-all" class="btn" type="button" title="Expand all (E)">Expand all</button>
-  <button id="collapse-all" class="btn" type="button" title="Collapse all (C)">Collapse all</button>
+  <button id="expand-all" class="btn" type="button" title="Expand tests and groups, but leave diffs collapsed (E)">Expand all</button>
+  <button id="collapse-all" class="btn" type="button" title="Collapse everything including diffs (C)">Collapse all</button>
+  <button id="toggle-diffs" class="btn" type="button" title="Toggle all diffs (D)">Show diffs</button>
   <button id="theme-toggle" class="btn icon" type="button" title="Toggle theme (T)" aria-label="Toggle theme">
     <span class="theme-sun">{sun_svg}</span>
     <span class="theme-moon" style="display:none">{moon_svg}</span>

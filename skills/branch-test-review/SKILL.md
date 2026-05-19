@@ -22,8 +22,11 @@ Compare the working tree to the **merge-base** of `HEAD` with the base branch (d
 For every included test, the report shows:
 - File path → optional test class → test method name
 - The test's docstring (left blank and visibly muted if missing — undocumented tests are worth surfacing)
+- The **per-test git diff** — coloured +/- lines from `git diff <merge-base> HEAD` for the hunks that overlap that test, so a reviewer can see exactly what changed without leaving the page. Diffs are **collapsed by default** with a one-line summary (`Diff · N hunks · +X −Y`) and have a dedicated "Show diffs" toolbar button (shortcut `D`). "Expand all" deliberately skips diff blocks to keep the view readable; "Collapse all" still closes them so a single button resets the page.
 - The full source of the test, collapsed by default and expandable on click, with Python syntax highlighting
 - Per-file and overall counts
+
+For tests in a newly added file, the diff section is replaced with a short "new file" notice (the full source already represents the change). For tests included via `--include-all` that have no overlapping diff hunks, the diff section says so explicitly.
 
 The HTML supports live search, a "only tests without docstring" filter, expand-all / collapse-all, and remembers state purely with `<details>` elements (it works without JavaScript for basic viewing).
 
