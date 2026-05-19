@@ -55,10 +55,10 @@ cd ai-skills
 ./install.sh
 ```
 
-This symlinks every skill in `skills/` into `~/.claude/skills/`. Existing entries are left alone — pass `--force` to replace them:
+This symlinks every skill in `skills/` into `~/.claude/skills/`. Existing entries are left alone. Pass `--force` if you want to overwrite them:
 
 ```sh
-./install.sh --force
+./install.sh
 ```
 
 ### Manual install (single skill)
