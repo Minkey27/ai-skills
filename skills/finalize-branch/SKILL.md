@@ -15,11 +15,13 @@ Gated workflow that chains four post-implementation steps: code review, simplify
 
 ## Config
 
-This skill reads optional config from `~/.config/ai-skills/config.env`. Source it at the start of every run, then reference the variables below. If the file is missing, the defaults are used.
+This skill reads optional config via the `AI_SKILLS_*` env vars. Recommended setup is one line in `~/.zshenv`:
 
-```bash
+```sh
 [ -f ~/.config/ai-skills/config.env ] && source ~/.config/ai-skills/config.env
 ```
+
+That makes the variables available to every shell Claude spawns. Commands below use `${VAR:-default}` syntax inline.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -129,12 +131,6 @@ The squash skill has its own internal gates:
 Push the branch and create the MR.
 
 ```bash
-# Load config
-[ -f ~/.config/ai-skills/config.env ] && source ~/.config/ai-skills/config.env
-TOOL="${AI_SKILLS_MR_TOOL:-gh}"
-TARGET="${AI_SKILLS_TARGET_BRANCH:-main}"
-
-# Push branch
 git push -u origin "$(git branch --show-current)"
 ```
 
@@ -143,7 +139,7 @@ git push -u origin "$(git branch --show-current)"
 Before drafting, read the full scope of the branch so the title/description reflect *all* the changes, not just the last commit subject:
 
 ```bash
-BASE_SHA=$(git merge-base "origin/$TARGET" HEAD)
+BASE_SHA=$(git merge-base "origin/${AI_SKILLS_TARGET_BRANCH:-main}" HEAD)
 
 # All commits on the branch with bodies
 git log --reverse --format='%s%n%n%b' $BASE_SHA..HEAD
@@ -180,18 +176,18 @@ Announce the chosen title and description in your response (so the user sees wha
 - Reviewers — from `$AI_SKILLS_REVIEWERS` if set; omit `--reviewer` entirely if empty.
 - Assignee — `@me`. Both `gh` and `glab` resolve this to the authenticated user.
 
-**Tool-specific invocation** — `gh` and `glab` differ on flag names. Pick the block matching `$TOOL`:
+**Tool-specific invocation** — `gh` and `glab` differ on flag names. Pick the block matching `$AI_SKILLS_MR_TOOL` (default `gh`):
 
 ```bash
 # Build the reviewer flag only when AI_SKILLS_REVIEWERS is non-empty
 REVIEWER_FLAG=""
 [ -n "${AI_SKILLS_REVIEWERS:-}" ] && REVIEWER_FLAG="--reviewer $AI_SKILLS_REVIEWERS"
 
-if [ "$TOOL" = "glab" ]; then
+if [ "${AI_SKILLS_MR_TOOL:-gh}" = "glab" ]; then
   glab mr create \
     --title "$TITLE" \
     --description "$DESCRIPTION" \
-    --target-branch "$TARGET" \
+    --target-branch "${AI_SKILLS_TARGET_BRANCH:-main}" \
     --draft \
     --assignee @me \
     $REVIEWER_FLAG
@@ -199,7 +195,7 @@ else
   gh pr create \
     --title "$TITLE" \
     --body "$DESCRIPTION" \
-    --base "$TARGET" \
+    --base "${AI_SKILLS_TARGET_BRANCH:-main}" \
     --draft \
     --assignee @me \
     $REVIEWER_FLAG
@@ -235,7 +231,6 @@ Return the MR/PR URL when done.
 - Leave a literal `<TICKET>` placeholder in the description — strip the line entirely when no ticket is found
 
 **Always:**
-- Source `~/.config/ai-skills/config.env` before Step 4 so reviewer/ticket/tool variables are populated
 - Compute BASE_SHA as merge-base, never use the remote target branch directly
 - Commit fixes from each step before proceeding to the next
 - Use the tool from `$AI_SKILLS_MR_TOOL` (default `gh`) for MR/PR creation

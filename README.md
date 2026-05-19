@@ -14,13 +14,21 @@ Each skill is a directory under [`skills/`](./skills) containing a `SKILL.md` (a
 
 ## Configuration
 
-Three skills (`finalize-branch`, `pytest-docker`, `rebase-on-main`) accept per-project values through an environment file. The rest work out of the box.
+Three skills (`finalize-branch`, `pytest-docker`, `rebase-on-main`) accept per-project values through environment variables. The rest work out of the box.
 
 ```sh
 mkdir -p ~/.config/ai-skills
 cp config.example.env ~/.config/ai-skills/config.env
 $EDITOR ~/.config/ai-skills/config.env
 ```
+
+Then expose the variables to Claude Code's shells by adding one line to `~/.zshenv` (or your shell's equivalent — `.bash_profile` for bash, etc.):
+
+```sh
+[ -f ~/.config/ai-skills/config.env ] && source ~/.config/ai-skills/config.env
+```
+
+Why `.zshenv` and not `.zshrc`? Claude Code's `Bash` tool launches **non-interactive** zsh shells, which only source `.zshenv`. Putting the source line in `.zshrc` won't expose the variables to skills.
 
 Every variable is optional. When a variable is empty, the skill either uses a sensible default (e.g. `gh` for `AI_SKILLS_MR_TOOL`) or skips the step that would have used it (e.g. migration verification is skipped when `AI_SKILLS_ALEMBIC_CMD` is empty). See `config.example.env` for the full list with inline comments.
 

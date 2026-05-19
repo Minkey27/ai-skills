@@ -13,12 +13,13 @@ Rebase current branch onto main, resolve merge conflicts intelligently, and veri
 
 ## Config
 
-This skill reads optional config from `~/.config/ai-skills/config.env`. Source it at the start of every run.
+This skill reads optional config via the `AI_SKILLS_*` env vars. Recommended setup is one line in `~/.zshenv`:
 
-```bash
+```sh
 [ -f ~/.config/ai-skills/config.env ] && source ~/.config/ai-skills/config.env
-SERVICE="${AI_SKILLS_BACKEND_SERVICE:-backend}"
 ```
+
+That makes the variables available to every shell Claude spawns. Commands below use `${VAR:-default}` syntax or guard each step on whether the relevant variable is set.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -39,7 +40,7 @@ Before starting, verify ALL of these:
    - If user says `--continue`: resume at **Conflict Resolution** (the rebase is mid-flight, so conflicts may still appear).
 4. **Docker is running** (only if migration/lint steps will run) — verify the service container is reachable:
    ```bash
-   docker compose exec "$SERVICE" echo "ok"
+   docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" echo "ok"
    ```
    If this fails: warn the user that migration verification and tests require Docker. Ask whether to proceed without them or wait. Skip this check entirely if `AI_SKILLS_ALEMBIC_CMD`, `AI_SKILLS_LINT_CMD`, and `AI_SKILLS_FORMAT_CMD` are all empty.
 
@@ -200,7 +201,7 @@ Then re-run to confirm they pass clean. If they still fail after auto-fix: stop 
 ### 2. Server health
 
 ```bash
-docker compose logs --tail=20 "$SERVICE"
+docker compose logs --tail=20 "${AI_SKILLS_BACKEND_SERVICE:-backend}"
 ```
 
 Check for startup errors or crash loops. If the server is down: stop and report. Skip this step if the project doesn't run a server in Docker.

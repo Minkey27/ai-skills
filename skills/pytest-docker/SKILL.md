@@ -13,18 +13,19 @@ description: >
 
 ## Config
 
-This skill reads optional config from `~/.config/ai-skills/config.env`. Source it at the start of every run.
+This skill reads optional config via the `AI_SKILLS_*` env vars. The recommended setup is one line in `~/.zshenv`:
 
-```bash
+```sh
 [ -f ~/.config/ai-skills/config.env ] && source ~/.config/ai-skills/config.env
-SERVICE="${AI_SKILLS_BACKEND_SERVICE:-backend}"
 ```
+
+That makes the variables available to every shell Claude spawns. Commands in this skill use `${VAR:-default}` syntax inline, so the skill also works with no config at all.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `AI_SKILLS_BACKEND_SERVICE` | `backend` | Name of the docker-compose service that runs pytest |
 
-All commands below assume `docker compose exec "$SERVICE" pytest …`. If your project runs pytest outside Docker, this skill is not the right tool — install a plain-pytest skill instead.
+If your project runs pytest outside Docker, this skill is not the right tool — install a plain-pytest skill instead.
 
 ## Subagent Usage
 
@@ -40,7 +41,7 @@ This skill applies to subagents too. If you are a subagent that has been dispatc
 **IMPORTANT**: Before running tests after making changes, always check the server logs first to verify the server started without errors:
 
 ```bash
-docker compose logs --tail=20 "$SERVICE"
+docker compose logs --tail=20 "${AI_SKILLS_BACKEND_SERVICE:-backend}"
 ```
 
 Look for:
@@ -55,7 +56,7 @@ Only proceed with tests once you've confirmed the server is running correctly. T
 
 ### Tier 1 — Targeted tests (after completing a task)
 ```bash
-docker compose exec "$SERVICE" pytest tests/integration/path/to/relevant_test.py -x -n 0 -ra --tb=short > .test-output.txt 2>&1; echo "exit: $?"
+docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/integration/path/to/relevant_test.py -x -n 0 -ra --tb=short > .test-output.txt 2>&1; echo "exit: $?"
 ```
 
 Flag rationale:
@@ -72,7 +73,7 @@ Run tests matching the changed modules — this is the primary iteration loop:
 
 ### Tier 2 — Full suite (checkpoints + final verification)
 ```bash
-docker compose exec "$SERVICE" pytest tests/ -q -n 0 --tb=short > .test-output.txt 2>&1; echo "exit: $?"
+docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/ -q -n 0 --tb=short > .test-output.txt 2>&1; echo "exit: $?"
 ```
 - No `-x` — collect all failures at once
 - `-n 0` — disable pytest-xdist, run single-process to avoid hoarding CPU/memory on the dev machine
@@ -101,7 +102,7 @@ On the happy path this keeps `.test-output.txt` at zero context cost — nothing
 2. Fix the failure
 3. Re-run **that specific test with `-vs` added** for per-test names and uncaptured stdout:
    ```bash
-   docker compose exec "$SERVICE" pytest tests/path/to/test.py::test_name -x -vs -n 0 --tb=short > .test-output.txt 2>&1; echo "exit: $?"
+   docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/path/to/test.py::test_name -x -vs -n 0 --tb=short > .test-output.txt 2>&1; echo "exit: $?"
    ```
 4. Once `exit: 0`, re-run the Tier 1 target directory to catch any neighbours that now fail
 
@@ -115,7 +116,6 @@ On the happy path this keeps `.test-output.txt` at zero context cost — nothing
 
 ## Hard Rules
 
-- **Always source the config first** so `$SERVICE` is populated with `$AI_SKILLS_BACKEND_SERVICE` (default `backend`).
 - **Always run single-process with `-n 0`** — never let pytest-xdist auto-detect workers. Parallel runs hoard CPU and memory on the dev machine and can mask ordering-dependent bugs. Every pytest command in this skill must pass `-n 0`.
 - Never pipe pytest output through `tail`, `grep`, or `head` in the bash command itself — redirect to `.test-output.txt`, then analyse with the `Grep` tool (using the Grep tool on the saved file is fine and expected)
 - Never use `--ignore` flags to skip failing tests
