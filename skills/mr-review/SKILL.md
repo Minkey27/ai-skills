@@ -1,6 +1,6 @@
 ---
 name: mr-review
-description: "MANUAL INVOCATION ONLY. Trigger this skill exclusively when the user types the literal slash command `/mr-review`. Do NOT trigger on natural-language phrases like 'review the MR', 'review this branch', 'let's review', or any other variation — those must be handled without this skill unless the user explicitly types the slash form. When invoked, runs a full GitLab MR review on the currently checked-out branch: fetches the linked ClickUp ticket (BPZ-### format), reads the MR description, runs `superpowers:requesting-code-review`, verifies each finding with parallel sub-agents, surfaces intent discrepancies between ticket/description/diff, and posts the findings the user approves back to the MR as line-anchored diff notes. Works for any MR the user has checked out — their own pre-flight self-review or a teammate's branch. Refuses if the MR's source branch isn't currently checked out, because without a working tree the verification sub-agents can't read files at the MR's tip or grep neighbors."
+description: "MANUAL INVOCATION ONLY. Trigger this skill exclusively when the user types the literal slash command `/mr-review`. Do NOT trigger on natural-language phrases like 'review the MR', 'review this branch', 'let's review', or any other variation — those must be handled without this skill unless the user explicitly types the slash form. When invoked, runs a full GitLab MR review on the currently checked-out branch: optionally fetches a linked ticket (when a tracker MCP is available), reads the MR description, runs `superpowers:requesting-code-review`, verifies each finding with parallel sub-agents, surfaces intent discrepancies between ticket/description/diff, and posts the findings the user approves back to the MR as line-anchored diff notes. Works for any MR the user has checked out — their own pre-flight self-review or a teammate's branch. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't currently checked out, because without a working tree the verification sub-agents can't read files at the MR's tip or grep neighbors."
 ---
 
 # /mr-review
@@ -24,21 +24,49 @@ Once invoked, the skill applies to **any MR the user currently has checked out**
 Do **not** use this skill for:
 - An MR whose source branch is **not currently checked out**. The verification step needs a working tree; without one, sub-agents can only see files via `git show`, which kills their ability to grep neighbors or understand surrounding code. Tell the user to check out the branch first (`glab mr checkout <iid>`).
 - Posting ad-hoc comments unrelated to a review pass — just use `glab mr note` directly.
+- Reviewing a GitHub PR. This skill is GitLab-only (see Config below). For GitHub, use a separate `pr-review` skill or run `superpowers:requesting-code-review` by itself.
 
 **Authorship doesn't matter** — the skill works the same for the user's own MR and a teammate's. The only difference is tone: when reviewing someone else's work, the discrepancy report and findings will be sent to the author via diff notes, so be precise and neutral. When self-reviewing, the same notes are essentially the user talking to themselves; that's fine too.
 
+## Config
+
+This skill reads optional config via the `AI_SKILLS_*` env vars. Recommended setup is one line in `~/.zshenv`:
+
+```sh
+[ -f ~/.config/ai-skills/config.env ] && source ~/.config/ai-skills/config.env
+```
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AI_SKILLS_MR_TOOL` | `gh` | Must be `glab` for this skill. If unset or `gh`, the skill stops with a "GitLab-only" message. |
+| `AI_SKILLS_TICKET_PREFIX` | _(empty)_ | Ticket prefix (e.g. `PROJ`). Empty → match any uppercase slug like `FOO-123`. |
+
+Ticket lookup additionally depends on which tracker MCP is available in the session — see Step 2. The skill works without any tracker MCP; it just skips the intent-from-ticket step.
+
 ## Hard rules
 
+- **GitLab only.** Check `${AI_SKILLS_MR_TOOL:-gh}` early. If not `glab`, stop and tell the user this skill targets GitLab; for GitHub, suggest running `superpowers:requesting-code-review` directly.
 - **Branch must match.** Confirm the current branch is the MR's source branch via `glab mr view --output json`. If not, stop and tell the user — switching branches mid-review is the user's call, not yours.
 - **Never post without confirmation.** Even if every finding looks great, present the checklist and wait for the user to pick. Posting to GitLab is irreversible (notifications fire, threads exist forever).
 - **`AskUserQuestion` has no default-checked option.** All checkboxes always start empty. Do not write "PRE-CHECKED" in option labels and expect them to be selected — they will not be. The skill works around this by splitting recommendations into a separate question (see Step 7).
-- **Content-Type header is mandatory** when calling `glab api ... --input -` to create a discussion. Without it GitLab returns HTTP 415. See [reference_glab_diff_notes.md](../../projects/-Users-yyung-Projects-deurdoor/memory/reference_glab_diff_notes.md) — the full position-payload rules and a worked example live there. Don't re-derive them.
+- **Content-Type header is mandatory** when calling `glab api ... --input -` to create a discussion. Without it GitLab returns HTTP 415. Full position-payload rules and a worked example live in [references/glab-diff-notes.md](references/glab-diff-notes.md). Don't re-derive them.
 - **Sub-agents that verify findings must read the actual files**, not summaries. The whole point is to catch hallucinated or out-of-date findings — that only works if they look at current code at the MR's tip.
 - **Honor `--dry-run`.** If the user invokes `/mr-review --dry-run` (or types "dry run" in the same message), build the payloads and print them as the receipt instead of POSTing. Posting to GitLab is irreversible; dry-run is how the user can sanity-check the anchor lines and body text before committing to the notifications.
 
 ## Workflow
 
 ### 1. Detect the MR and load the diff
+
+First gate on the tool:
+
+```bash
+if [ "${AI_SKILLS_MR_TOOL:-gh}" != "glab" ]; then
+  echo "STOP: /mr-review is GitLab-only. Set AI_SKILLS_MR_TOOL=glab to use it."
+  exit 1
+fi
+```
+
+Then fetch the MR:
 
 ```bash
 glab mr view --output json
@@ -65,27 +93,43 @@ git diff --unified=0 "$BASE_SHA"..HEAD
 
 > **Note:** `BASE_SHA` here is the local merge-base for line-math during posting. The `diff_refs.base_sha` from GitLab is what goes in the position payload — keep them distinct.
 
-### 2. Find the ClickUp ticket
+### 2. Find the ticket (optional)
 
-The team's tickets use the **`BPZ-123`** custom-id format (Jira-style prefix + number). Try these sources in order; stop at the first hit:
+This step only runs if a project tracker MCP is available in the current session. Check the tool list for one of:
 
-1. **Branch name** — regex `BPZ-\d+`, anywhere in the branch (e.g. `feat/BPZ-456-add-thing`, `BPZ-123`, `andrew/BPZ-789-fix`).
-2. **MR title** — same regex, plus bracketed forms `[BPZ-123]` or `(BPZ-123)`.
-3. **MR description** — same regex, *and* any `app.clickup.com/t/<id>` URL (treat the URL's `<id>` segment as a direct ClickUp task id, not a BPZ custom id).
-4. **Ask the user** — if nothing matches, ask once: "I couldn't find a BPZ ticket reference. Want to provide one, or proceed without?"
+- A ClickUp MCP (`mcp__*clickup*` or similar)
+- A Jira MCP (`mcp__*jira*`)
+- A Linear MCP (`mcp__*linear*`)
 
-Fetch via the ClickUp MCP. `BPZ-123` is a custom id, not the raw task id, so try a few resolution paths in order:
+If none are present, skip this step and continue from Step 4 with "ticket unavailable" noted in the discrepancy report.
+
+**Build the ticket pattern from config:**
+
+```bash
+PATTERN="${AI_SKILLS_TICKET_PREFIX:-[A-Z]+}-[0-9]+"
+```
+
+Try these sources in order; stop at the first hit:
+
+1. **Branch name** — regex matches anywhere in the branch (e.g. `feat/PROJ-456-add-thing`, `PROJ-123`, `andrew/PROJ-789-fix`).
+2. **MR title** — same regex, plus bracketed forms `[PROJ-123]` or `(PROJ-123)`.
+3. **MR description** — same regex, *and* any tracker URL that the available MCP would understand (e.g. `app.clickup.com/t/<id>`, `<org>.atlassian.net/browse/<id>`, `linear.app/<org>/issue/<id>`). Treat the URL's id segment as a direct task id.
+4. **Ask the user** — if nothing matches, ask once: "I couldn't find a ticket reference. Want to provide one, or proceed without?"
+
+Fetch via whichever MCP is available. For ClickUp:
 
 ```
-1. mcp__claude_ai_ClickUp__clickup_get_task(taskId="BPZ-123")
+1. mcp__<clickup-server>__clickup_get_task(taskId="<TICKET>")
    # Many ClickUp setups accept custom ids directly here.
 
 2. If that errors / returns nothing:
-   mcp__claude_ai_ClickUp__clickup_search(query="BPZ-123")
+   mcp__<clickup-server>__clickup_search(query="<TICKET>")
    # Then take the first result whose custom_id matches exactly.
 ```
 
-If the URL form (`app.clickup.com/t/<id>`) was the source, that `<id>` is already the raw task id — skip the custom-id dance and call `clickup_get_task` with it directly.
+For Jira / Linear, use the analogous `get_issue` / `search` tools the MCP exposes.
+
+If a URL form was the source, the embedded id is already the raw task id — skip the custom-id dance and call the MCP's get-task tool with it directly.
 
 ### 3. Score ticket confidence (decide whether to use it)
 
@@ -212,7 +256,7 @@ For findings in the **Excluded** bucket, list them in the discrepancy report wit
 
 Otherwise: for each selected finding, build the discussion payload and POST it. GitLab's API is one discussion per request — there is no batch endpoint. Prefer a single Python helper script that loops over the payloads and captures `discussion_id` + `note_id` from each response, rather than firing many parallel `Bash` calls; sequential posting from one script is easier to debug if a payload is rejected, and the throughput cost (a few hundred ms per POST) is negligible compared to the time you already spent verifying.
 
-Payload skeleton (full rules in [reference_glab_diff_notes.md](../../projects/-Users-yyung-Projects-deurdoor/memory/reference_glab_diff_notes.md)):
+Payload skeleton (full rules in [references/glab-diff-notes.md](references/glab-diff-notes.md)):
 
 ```python
 {
@@ -235,7 +279,7 @@ Payload skeleton (full rules in [reference_glab_diff_notes.md](../../projects/-U
 }
 ```
 
-Line-number rules (added vs removed vs context) and the `Content-Type` header gotcha are in the referenced memory file. Read it before constructing the payload — getting the position wrong silently anchors notes to the wrong file or rejects them with HTTP 415.
+Line-number rules (added vs removed vs context) and the `Content-Type` header gotcha are in [references/glab-diff-notes.md](references/glab-diff-notes.md). Read it before constructing the payload — getting the position wrong silently anchors notes to the wrong file or rejects them with HTTP 415.
 
 For findings with `line_start == line_end`, omit `line_range` (single-line note). For ranges, include both endpoints.
 
@@ -282,10 +326,11 @@ Don't paste the entire finding object. Don't include verification metadata in th
 
 ## Failure modes to watch for
 
-- **`glab mr view` returns nothing** — no MR on the branch. Tell the user, suggest `glab mr create --draft --reviewer andrew897,janath2` if they want one, and stop.
+- **`AI_SKILLS_MR_TOOL` is not `glab`** — stop early with a message pointing at the Config section. Don't attempt the workflow with `gh`; the diff-note API shape is completely different.
+- **`glab mr view` returns nothing** — no MR on the branch. Tell the user, suggest `glab mr create --draft` if they want one (omit `--reviewer` unless `$AI_SKILLS_REVIEWERS` is set), and stop.
 - **Stale local branch** — if `git fetch` shows the remote has commits you don't, the review will be against old code. Surface this and ask whether to pull first.
 - **`requesting-code-review` returns no findings** — perfectly valid. Still produce the discrepancy report from step 4 (if any) and stop without posting.
-- **ClickUp MCP unavailable / 401** — proceed without the ticket. Note "ticket unavailable" in the discrepancy report.
+- **Tracker MCP unavailable** — proceed without the ticket. Note "ticket unavailable" in the discrepancy report.
 - **Findings with invented line numbers** — when the sub-agent reports `issue_real: no` because the cited line doesn't contain the cited problem, treat it as a hallucination, not a real finding.
 
 ## Why this shape
