@@ -1,17 +1,34 @@
 ---
 name: finalize-branch
-description: Use when implementation is complete and you want to review, simplify, squash, and create an MR — the full post-implementation finalization workflow before sending work for review
+description: Use when implementation is complete and you want to review, simplify, squash, and create an MR — the full post-implementation finalization workflow before sending work for review. Pass `yolo` as an argument to skip the simplify/squash confirmation gates while still letting the user curate which code-review findings to fix.
 ---
 
 # Finalize Branch
 
 ## Overview
 
-Gated workflow that chains four post-implementation steps: code review, simplify, squash, and MR creation. Each step presents output for user approval before proceeding.
+Workflow that chains four post-implementation steps: code review, simplify, squash, and MR creation.
 
 **Core principle:** Review it, clean it, squash it, ship it.
 
-**Announce at start:** "I'm using the finalize-branch skill to review, simplify, squash, and create an MR for this branch."
+**Announce at start:** "I'm using the finalize-branch skill to review, simplify, squash, and create an MR for this branch." If yolo mode is active, add: "Running in **yolo** mode — auto-applying simplify and squash without confirmation gates. Code-review findings will still be curated by you."
+
+## Arguments
+
+The skill accepts one optional argument that comes through as the literal text after `/finalize-branch`.
+
+| Arg | Effect |
+|---|---|
+| _(none)_ | **Gated mode** (default). User confirms between Steps 1→2, 2→3, 3→4. |
+| `yolo` (also accepts `--yolo`, `auto`, `-y`) | **Yolo mode.** Gates between Steps 2→3→4 are removed. Step 1 keeps the curation checklist (that's selection, not gating). |
+
+Detect by matching the args case-insensitively against `^(yolo|--yolo|auto|-y)$`. If anything else is passed, ask the user what they meant rather than guessing.
+
+**What yolo does NOT change:**
+- Pre-flight checks still run and still stop the workflow on failure.
+- Step 1's curation checklist (verification fan-out + pre-selected fixes) still runs — the user picks which findings to address.
+- The `squash` sub-skill has its own internal confirmation; we don't override that, surface it to the user as-is.
+- The squash skill's diff-verification (no changes lost) still runs.
 
 ## Config
 
@@ -55,31 +72,29 @@ digraph finalize {
     node [shape=box];
 
     preflight [label="Pre-flight checks"];
-    review [label="Step 1: Code Review\n(requesting-code-review)"];
-    fix [label="Fix issues\n(user says what NOT to fix)"];
-    gate1 [label="User confirms" shape=diamond];
-    simplify [label="Step 2: Simplify\n(code-simplifier)"];
-    gate2 [label="User confirms" shape=diamond];
-    squash [label="Step 3: Squash\n(squash skill)"];
-    gate3 [label="User confirms" shape=diamond];
+    review [label="Step 1: requesting-code-review"];
+    verify [label="Fan out sub-agents\nto verify each finding"];
+    curate [label="Curation checklist\n(pre-selected by recommendation)" shape=diamond];
+    fix [label="Fix selected findings\n+ commit"];
+    gate1 [label="User confirms\n(skipped in yolo)" shape=diamond];
+    simplify [label="Step 2: Simplify\n(auto-applies in yolo)"];
+    gate2 [label="User confirms\n(skipped in yolo)" shape=diamond];
+    squash [label="Step 3: Squash\n(squash skill has its own gates)"];
+    gate3 [label="User confirms\n(skipped in yolo)" shape=diamond];
     mr [label="Step 4: Create MR"];
     done [label="Done" shape=doublecircle];
 
-    preflight -> review;
-    review -> fix;
-    fix -> gate1;
+    preflight -> review -> verify -> curate -> fix -> gate1;
     gate1 -> simplify [label="proceed"];
-    gate1 -> fix [label="more fixes"];
-    simplify -> gate2;
-    gate2 -> squash [label="proceed"];
-    gate2 -> simplify [label="changes needed"];
-    squash -> gate3;
-    gate3 -> mr [label="proceed"];
+    simplify -> gate2 -> squash [label="proceed"];
+    squash -> gate3 -> mr [label="proceed"];
     mr -> done;
 }
 ```
 
-### Step 1: Code Review
+### Step 1: Code Review (with verification + curation)
+
+This step is identical in both gated and yolo modes — the curation checklist *is* the gate.
 
 **REQUIRED SUB-SKILL:** Use `superpowers:requesting-code-review` if available; otherwise dispatch a code-reviewer subagent directly.
 
@@ -93,12 +108,67 @@ HEAD_SHA=$(git rev-parse HEAD)
 
 Dispatch the code-reviewer subagent with these SHAs.
 
-**After review returns:**
+**1a. Structure the findings.** Capture each finding as:
 
-1. Present all findings to the user
-2. **Default: fix everything.** The user will tell you what NOT to fix.
-3. Fix the issues, commit the fixes
-4. **GATE:** Ask the user to confirm before proceeding to Step 2
+```
+{
+  "id": "F1",
+  "severity": "high|medium|low|nit",
+  "file": "path/to/file.py",
+  "line_start": 42,
+  "line_end": 42,
+  "title": "short headline",
+  "issue": "what the reviewer says is wrong",
+  "recommendation": "what the reviewer suggests"
+}
+```
+
+If line numbers aren't provided, leave them null and treat the finding as file-level. Do not invent line numbers — wrong anchors mislead the user later.
+
+**1b. Fan out to verify each finding in parallel.** Single message, one sub-agent per finding (use the `general-purpose` Agent type). Each sub-agent gets:
+
+```
+Verify this code-review finding against the actual code on the current branch.
+
+Finding:
+  File: <file>
+  Lines: <line_start>-<line_end>  (or "file-level")
+  Issue: <issue text>
+  Recommendation: <recommendation text>
+
+Tasks:
+  1. Read the cited file and surrounding context. Confirm whether the described
+     issue is actually present at the cited location on the current branch. If
+     the lines have shifted, find the equivalent location.
+  2. Independently judge whether the recommendation, if applied, would actually
+     resolve the issue without introducing a new problem.
+
+Report:
+  - issue_real: yes / no / partial — with one-sentence reason
+  - fix_sound:  yes / no / risky   — with one-sentence reason
+  - corrected_lines: <if the line numbers were wrong, give the right ones>
+  - notes: anything else worth knowing
+
+Be specific. Do not parrot the finding back — actually look at the code. Under 150 words.
+```
+
+Aggregate the results into a table keyed by finding id.
+
+**1c. Present the curation checklist** via `AskUserQuestion` with `multiSelect: true`.
+
+- **Pre-checked** (place first in the option list, mark "(Recommended)" in label): `issue_real == yes` AND severity ∈ {`high`, `medium`} AND `fix_sound != no`.
+- **Unchecked but shown**: nits, partial-real issues, risky fixes — the user may still want to fix them.
+- **Excluded entirely**: `issue_real == no` AND `fix_sound == no` — these are hallucinations. List them briefly in plain text above the checklist so the user knows they were dropped.
+
+Option label format: `[F3 medium] services.py:120 — duplicate enum 'Afdeling'`. Use the `description` field for the one-line issue summary plus a verification badge like `✓ verified, fix sound` or `⚠ lines shifted to 125-128`.
+
+If there are more than 4 options total, batch into successive `AskUserQuestion` calls (4 per question), grouped by severity so heavy hitters come first.
+
+**1d. Fix the selected findings, commit.** Skip any the user did not select. Commit with a message like `fix: address code-review findings (F1, F3, F5)`.
+
+**1e. Gate transition:**
+- **Gated mode:** Ask "Proceed to Step 2 (simplify)?" before continuing.
+- **Yolo mode:** Skip the confirmation — proceed directly to Step 2 in the same turn.
 
 ### Step 2: Simplify
 
@@ -106,25 +176,27 @@ Dispatch the code-reviewer subagent with these SHAs.
 
 The code-simplifier analyzes recently modified code on the branch and proposes clarity/consistency improvements.
 
-**After simplify returns:**
-
+**Gated mode** (default):
 1. Present the proposed changes to the user
 2. User approves or rejects individual changes
 3. Commit approved changes
 4. **GATE:** Ask the user to confirm before proceeding to Step 3
 
+**Yolo mode:**
+1. Apply all proposed changes the code-simplifier returns. Trust the sub-skill's judgment.
+2. Print a short summary of what was applied (file + one-line description per change) so the user can see what happened.
+3. Commit with `refactor: simplify per code-simplifier`.
+4. Proceed directly to Step 3 in the same turn — no confirmation.
+
 ### Step 3: Squash
 
 **REQUIRED SUB-SKILL:** Use `squash`
 
-The squash skill has its own internal gates:
-- Proposes commit grouping and waits for user confirmation
-- Executes rebase
-- Verifies no changes lost (before/after diff)
+The squash skill has its own internal gates that this skill does NOT override (its grouping confirmation and diff-verification are safety, not approval). Yolo mode does not silence them — if the user wants them silenced, that's a change to the `squash` skill itself.
 
-**After squash completes:**
+**Gated mode** (default): after squash completes, **GATE:** Ask the user to confirm before proceeding to Step 4.
 
-1. **GATE:** Ask the user to confirm before proceeding to Step 4
+**Yolo mode:** after squash completes (including its own internal confirmation), proceed directly to Step 4 in the same turn — no extra confirmation.
 
 ### Step 4: Create MR
 
@@ -222,8 +294,12 @@ Return the MR/PR URL when done.
 ## Red Flags
 
 **Never:**
-- Skip a gate between Steps 1–3 — every one needs user confirmation
-- Assume review findings should be ignored — fix all by default
+- Skip the Step 1 curation checklist — even in yolo mode, the user selects which findings to fix. Yolo only skips gates *between* steps, not within Step 1.
+- Skip a gate between Steps 1–3 **in gated mode** — every one needs user confirmation in default mode
+- Treat anything other than the documented yolo aliases (`yolo`, `--yolo`, `auto`, `-y`) as yolo — ask the user instead of guessing
+- Skip pre-selecting findings by recommendation — the curation checklist must come pre-checked based on severity + verification, not blank
+- Skip the verification fan-out — pre-selected findings are only trustworthy if sub-agents have confirmed each one
+- Apply unverified code-simplifier suggestions in yolo without printing a summary the user can scan
 - Force-push without the squash skill's verification passing
 - Prefix the MR/PR title with `Draft:` or `WIP:` — use the tool's draft flag instead
 - Draft MR title/description from the last commit subject alone — read the full branch scope first
@@ -231,7 +307,11 @@ Return the MR/PR URL when done.
 - Leave a literal `<TICKET>` placeholder in the description — strip the line entirely when no ticket is found
 
 **Always:**
+- Detect the yolo argument before starting — announce it explicitly so the user can interrupt if they didn't mean it
 - Compute BASE_SHA as merge-base, never use the remote target branch directly
+- Dispatch finding-verification sub-agents in parallel (single message, many tool calls)
+- Pre-check curation options for `issue_real == yes` AND severity ∈ {high, medium} AND `fix_sound != no`; leave the rest unchecked
+- Drop hallucinated findings (`issue_real == no` AND `fix_sound == no`) from the checklist and list them briefly above it
 - Commit fixes from each step before proceeding to the next
 - Use the tool from `$AI_SKILLS_MR_TOOL` (default `gh`) for MR/PR creation
 - Run lint and format before any commits (project-specific; if your project has them, run them)
