@@ -48,7 +48,8 @@ Ticket lookup additionally depends on which tracker MCP is available in the sess
 - **GitLab only.** Check `${AI_SKILLS_MR_TOOL:-gh}` early. If not `glab`, stop and tell the user this skill targets GitLab; for GitHub, suggest running `superpowers:requesting-code-review` directly.
 - **Branch must match.** Confirm the current branch is the MR's source branch via `glab mr view --output json`. If not, stop and tell the user — switching branches mid-review is the user's call, not yours.
 - **Never post without confirmation.** Even if every finding looks great, present the checklist and wait for the user to pick. Posting to GitLab is irreversible (notifications fire, threads exist forever).
-- **`AskUserQuestion` has no default-checked option.** All checkboxes always start empty. Do not write "PRE-CHECKED" in option labels and expect them to be selected — they will not be. The skill works around this by splitting recommendations into a separate question (see Step 7).
+- **Presentation and curation prompts never share a turn.** Step 7a (discrepancy report + finding summaries + overview table) must end the assistant turn; the first `AskUserQuestion` goes in a *later* turn, after the user has replied. A same-turn prompt visually preempts the analysis — the dialog takes focus and the user picks findings without having read the verification results. Text order within a turn does not count as "presenting before prompting".
+- **`AskUserQuestion` has no default-checked option.** All checkboxes always start empty. Do not write "PRE-CHECKED" in option labels and expect them to be selected — they will not be. The skill works around this by splitting curation into two sequential prompts — Recommended first, then Optional (see Step 7).
 - **Content-Type header is mandatory** when calling `glab api ... --input -` to create a discussion. Without it GitLab returns HTTP 415. Full position-payload rules and a worked example live in [references/glab-diff-notes.md](references/glab-diff-notes.md). Don't re-derive them.
 - **Sub-agents that verify findings must read the actual files**, not summaries. The whole point is to catch hallucinated or out-of-date findings — that only works if they look at current code at the MR's tip.
 - **Honor `--dry-run`.** If the user invokes `/mr-review --dry-run` (or types "dry run" in the same message), build the payloads and print them as the receipt instead of POSTing. Posting to GitLab is irreversible; dry-run is how the user can sanity-check the anchor lines and body text before committing to the notifications.
@@ -225,28 +226,48 @@ Be specific. Do not parrot the finding back — actually look at the code. Under
 
 Aggregate the results into a single table keyed by finding id.
 
-### 7. Present the curation checklist
+### 7. Present findings, then the curation prompts
 
-Before the checklist, surface the discrepancy report from step 4 in plain text — these are not selectable, they're context the user needs to decide what to post.
+**7a. Pre-prompt presentation.** Print — in this order:
 
-**Classify every finding into exactly one bucket:**
+1. **The discrepancy report from step 4** in plain text. Not selectable; it's context the user needs to decide what to post.
+2. **A short summary of each finding** — one block per finding, 2–4 sentences: what's wrong, why it matters, and what verification concluded (including any corrected diagnosis). This is the *detail layer*; the checkbox options later stay minimal because the detail already lives here.
+3. **An overview table at the end** — the *scan layer* the user reads right before ticking:
 
-| Bucket | Rule | Question it goes into |
+   ```
+   | ID | Sev | Anchor | Real? | Fix sound? | Bucket |
+   |----|-----|--------|-------|------------|--------|
+   | F1 | medium | service.py:62 | ✓ yes | ⚠ risky | Recommended |
+   | F2 | medium | test_routes.py:107 | ✓ yes | ✓ yes | Recommended |
+   | F3 | low | (file-level) | ✓ yes | ✓ yes | Optional |
+   ```
+
+**Then END YOUR TURN.** The presentation must be a complete assistant message with **no `AskUserQuestion` in the same turn**. The question dialog takes over the screen the moment it fires, so a same-turn prompt buries the analysis above an active dialog and the user decides unread. Putting the report "before" the prompt *within one turn* does **not** satisfy this step — "before" means a turn boundary, not text order. Wait for the user's reply (an acknowledgment like "go", a question about a finding, or a re-classification request) and only then send the first curation prompt from 7c. This reply beat is also where the user can interrogate a finding or move it between buckets *before* the checkbox dialog frames the decision.
+
+Do not skip straight from verification results to the prompt — the summaries and table are what let the user answer the checkboxes without scrolling back through the session.
+
+**7b. Classify every finding into exactly one bucket:**
+
+| Bucket | Rule | Prompt it goes into |
 |---|---|---|
-| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND (severity ∈ {`critical`, `high`, `medium`} OR the corrected diagnosis is materially useful even at `low`) | Q1 — "Confirm to post" |
-| **Optional** | `issue_real ∈ {yes, partial}` but severity is `low`/`nit`, OR `fix_sound == risky` (real but suggestion has caveats) | Q2 — "Optional additions" |
+| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND (severity ∈ {`critical`, `high`, `medium`} OR the corrected diagnosis is materially useful even at `low`) | Prompt 1 — "Confirm to post" |
+| **Optional** | `issue_real ∈ {yes, partial}` but severity is `low`/`nit`, OR `fix_sound == risky` (real but suggestion has caveats) | Prompt 2 — "Optional additions" |
 | **Excluded** | `issue_real == no` (verified false positive), OR sub-agent recommends declining | Not shown as a selectable option. Listed in the discrepancy report instead. |
+
+> **Precedence:** the rules overlap for a `medium`+ finding with `fix_sound == risky` — the risky clause wins and the finding goes to **Optional**, regardless of severity. A real issue whose suggested fix has caveats should not be posted on the skill's recommendation; the user opts in with the caveat visible in the badge.
 
 > **Why `partial` belongs in Recommended for Critical findings.** A `partial` verdict often means the *bug* is real but the reviewer's diagnosis of *how* it triggers was wrong. The sub-agent provides a corrected diagnosis; that corrected version is the one that gets posted. Down-rating it to Optional would defeat the verification step's whole purpose.
 
-**Two-question pattern** (works around `AskUserQuestion`'s no-default-checked limitation):
+**7c. Two sequential prompts** (works around `AskUserQuestion`'s no-default-checked limitation):
 
-- **Q1: "These N findings are recommended for posting. Tick all you want to send."** Contains only the Recommended bucket. Make the question text explicit: every option in this list is one the skill recommends posting. The user ticks to confirm, unticks to drop.
-- **Q2: "Optional additions — none recommended, but you may still want to post some."** Contains the Optional bucket. Empty selection is the expected default; user ticks to opt in.
+- **Prompt 1: "These N findings are recommended for posting. Tick all you want to send."** A standalone `AskUserQuestion` call containing **only** the Recommended bucket. Make the question text explicit: every option in this list is one the skill recommends posting. The user ticks to confirm, unticks to drop. **Wait for the answer before sending prompt 2.**
+- **Prompt 2: "Optional additions — none recommended, but you may still want to post some."** A second, separate `AskUserQuestion` call containing **only** the Optional bucket. Empty selection is the expected default; user ticks to opt in.
 
-If either bucket exceeds 4 options, batch within the bucket (Q1a, Q1b, ... then Q2a, Q2b, ...) rather than mixing buckets. Group by severity inside each batch so heavy hitters come first.
+Do **not** combine both buckets into a single `AskUserQuestion` call with two questions — the recommended picks deserve the user's full attention before the optional list competes for it. Skip a prompt entirely when its bucket is empty.
 
-Each option label should be short and scannable: `[F3 medium] auth/repositories.py:128 — every dropdown click rewrites user_roles`. Use the `description` field for the one-line summary plus a verification badge like `✓ verified, fix sound` or `⚠ corrected: triggers on sort/filter, not first load` or `⚠ fix requires repo refactor — bigger than one line`.
+If a bucket exceeds 4 options, batch within the bucket across consecutive prompts (1a, 1b, ... then 2a, 2b, ...) — never mix buckets in one prompt, and finish all Recommended prompts before the first Optional one. Group by severity inside each batch so heavy hitters come first.
+
+**Keep options minimal** — the detail already appeared in 7a. Label: `[F3 medium] auth/repositories.py:128 — every dropdown click rewrites user_roles` (ID + severity + anchor + headline). The `description` field carries **only** the verification badge — `✓ verified, fix sound`, `⚠ corrected: triggers on sort/filter, not first load`, `⚠ fix requires repo refactor — bigger than one line` — no summary sentences.
 
 For findings in the **Excluded** bucket, list them in the discrepancy report with a one-line "why excluded" so the user knows the skill considered them and what verification found. Don't silently drop findings.
 
@@ -337,7 +358,9 @@ Don't paste the entire finding object. Don't include verification metadata in th
 
 Code review skills tend to over-trigger findings (false positives) because LLMs pattern-match on diff text without considering surrounding context or whether the recommendation actually fits the codebase's conventions. The verification fan-out exists to catch that *before* the user has to filter manually in a checklist of 30 items. The discrepancy report exists because finding-level review misses the larger question: "is this MR doing what it claims?" — which is often where the biggest issues live.
 
-The **two-question curation pattern** in Step 7 is a workaround for `AskUserQuestion`'s lack of a default-checked field — but it has a secondary benefit: separating *recommended* from *optional* makes the user's job a one-handed scan-and-tick on the recommended question rather than a careful read of every item to decide what's worth posting. Don't collapse the two questions back into one "everything goes here" list; it loses the recommendation signal entirely.
+The **two sequential curation prompts** in Step 7 are a workaround for `AskUserQuestion`'s lack of a default-checked field — but the split has a secondary benefit: separating *recommended* from *optional* makes the user's job a one-handed scan-and-tick on the recommended prompt rather than a careful read of every item to decide what's worth posting. Don't collapse the two prompts back into one "everything goes here" list, and don't merge them into a single dialog call with two questions side by side — both lose the recommendation signal's priority. The prompts stay **minimal** (ID + anchor + headline + badge) because the *summaries-then-table* presentation in 7a already carried the detail: summaries are the detail layer, the overview table is the scan layer, and the checkboxes are just the decision layer. Cramming finding detail into option descriptions duplicates 7a and makes the dialog unscannable.
+
+The **turn-break between 7a and 7c** exists because of an observed failure, not theory: a run that emitted the full report and the first `AskUserQuestion` in one turn technically satisfied "print before the prompt", but the dialog seized the screen and the user was asked to curate findings they had never seen. Reading requires a turn the user gets to finish; any wording that lets the presentation and the prompt share a turn re-opens that hole.
 
 The **dry-run** mode exists because the first time you run `/mr-review` on a real MR, you don't yet know whether the line-anchor math is right for this codebase's file layout. Posting eight diff notes to the wrong lines is irreversible and noisy; running the same flow with `--dry-run` first costs one round trip and catches anchor bugs before the team sees them.
 
