@@ -1,1 +1,5 @@
 docs/superpowers/
+__pycache__/
+*.pyc
+.test-output.txt
+.pytest_cache/

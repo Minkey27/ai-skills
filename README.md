@@ -11,6 +11,7 @@ A personal collection of [Claude Code](https://docs.claude.com/en/docs/claude-co
 - **pytest-docker** — run pytest inside the project's docker-compose backend container.
 - **rebase-on-main** — rebase the current feature branch onto `main` with guided conflict resolution.
 - **squash** — reorganize messy or fixup commits into clean logical commits.
+- **worklog** — reconstruct what you worked on in a time window from Claude Code session transcripts + git history; renders a `Subject | Summary | Wallclock | Active estimate` table to help log hours. Reports only; no config required (`AI_SKILLS_TICKET_PREFIX` optionally improves ticket labeling).
 
 Each skill is a directory under [`skills/`](./skills) containing a `SKILL.md` (and optional helper scripts).
 
@@ -56,6 +57,7 @@ Common values to set:
 | `process-mr-feedback` | Required | `AI_SKILLS_MR_TOOL=glab` (GitLab-only). `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, `AI_SKILLS_TEST_CMD`, `AI_SKILLS_COMMIT_TRAILER` are optional (each step is skipped when its variable is empty; a project test-runner skill is preferred over `AI_SKILLS_TEST_CMD` when present). |
 | `pytest-docker` | Optional | `AI_SKILLS_BACKEND_SERVICE` (default `backend`); only useful if you run pytest in docker-compose |
 | `rebase-on-main` | Optional | `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, `AI_SKILLS_MIGRATIONS_PATH`, `AI_SKILLS_ALEMBIC_CMD` (each step is skipped when its variable is empty) |
+| `worklog` | Optional | `AI_SKILLS_TICKET_PREFIX` (labeling only); otherwise `git` + Python stdlib. Scans `~/.claude/projects`. |
 
 All skills run with no config — the project-specific steps just turn into no-ops.
 
