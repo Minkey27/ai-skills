@@ -37,6 +37,12 @@ list for its next step.
 { id, severity, file, line_start, line_end, title, issue, recommendation, source }
 ```
 
+`source` is the lane that produced the finding (e.g. `"security"`). After dedup a
+merged finding's `source` may be an array of lanes (e.g. `["security","correctness"]`),
+so treat it as `string | string[]`. It is informational metadata — callers may surface
+it or ignore it; the existing `finalize-branch` / `mr-review` capture schemas omit it,
+which is fine.
+
 Severity scale: `critical` / `high` / `medium` / `low` / `nit`.
 
 ## Process

@@ -89,6 +89,7 @@ Get the unified diff so later steps can identify added/removed/context lines for
 ```bash
 git fetch origin "$(glab mr view -F json | jq -r .target_branch)" --quiet
 BASE_SHA=$(git merge-base "origin/$(glab mr view -F json | jq -r .target_branch)" HEAD)
+HEAD_SHA=$(git rev-parse HEAD)
 git diff --unified=0 "$BASE_SHA"..HEAD
 ```
 
