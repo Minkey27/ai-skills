@@ -167,15 +167,18 @@ Compare them. Flag any of:
 
 Save discrepancies for the final report — *do not* let them become "findings" themselves. They are upstream of code review.
 
-### 5. Run requesting-code-review
+### 5. Run parallel-code-review
 
-Invoke the superpowers skill:
+Invoke the finder skill:
 
 ```
-Skill: superpowers:requesting-code-review
+Skill: parallel-code-review
 ```
 
-Follow its instructions. When it produces findings, capture them in a structured list:
+Pass it the `BASE_SHA` and `HEAD_SHA` computed in Step 1. It fans out 5
+dimension-specialist reviewers and returns the deduped findings list. (Fall back to
+`superpowers:requesting-code-review` only if `parallel-code-review` is unavailable.)
+When it produces findings, capture them in a structured list:
 
 ```
 [

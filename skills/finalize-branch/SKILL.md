@@ -96,7 +96,7 @@ digraph finalize {
 
 This step is identical in both gated and yolo modes — the curation checklist *is* the gate.
 
-**REQUIRED SUB-SKILL:** Use `superpowers:requesting-code-review` if available; otherwise dispatch a code-reviewer subagent directly.
+**REQUIRED SUB-SKILL:** Use `parallel-code-review` to generate findings — it fans out 5 dimension-specialist reviewers and returns the deduped findings list this step consumes. (Falls back to `superpowers:requesting-code-review` only if `parallel-code-review` is unavailable.)
 
 Compute SHAs using the merge-base (never `origin/main` directly):
 
@@ -106,7 +106,7 @@ BASE_SHA=$(git merge-base origin/main HEAD)
 HEAD_SHA=$(git rev-parse HEAD)
 ```
 
-Dispatch the code-reviewer subagent with these SHAs.
+Invoke `parallel-code-review` with these SHAs.
 
 **1a. Structure the findings.** Capture each finding as:
 
