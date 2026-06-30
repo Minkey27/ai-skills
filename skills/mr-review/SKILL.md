@@ -1,6 +1,6 @@
 ---
 name: mr-review
-description: "MANUAL INVOCATION ONLY. Trigger this skill exclusively when the user types the literal slash command `/mr-review`. Do NOT trigger on natural-language phrases like 'review the MR', 'review this branch', 'let's review', or any other variation — those must be handled without this skill unless the user explicitly types the slash form. When invoked, runs a full GitLab MR review on the currently checked-out branch: optionally fetches a linked ticket (when a tracker MCP is available), reads the MR description, runs `superpowers:requesting-code-review`, verifies each finding with parallel sub-agents, surfaces intent discrepancies between ticket/description/diff, and posts the findings the user approves back to the MR as line-anchored diff notes. Works for any MR the user has checked out — their own pre-flight self-review or a teammate's branch. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't currently checked out, because without a working tree the verification sub-agents can't read files at the MR's tip or grep neighbors."
+description: "MANUAL INVOCATION ONLY. Trigger this skill exclusively when the user types the literal slash command `/mr-review`. Do NOT trigger on natural-language phrases like 'review the MR', 'review this branch', 'let's review', or any other variation — those must be handled without this skill unless the user explicitly types the slash form. When invoked, runs a full GitLab MR review on the currently checked-out branch: optionally fetches a linked ticket (when a tracker MCP is available), reads the MR description, runs `parallel-code-review`, verifies each finding with parallel sub-agents, surfaces intent discrepancies between ticket/description/diff, and posts the findings the user approves back to the MR as line-anchored diff notes. Works for any MR the user has checked out — their own pre-flight self-review or a teammate's branch. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't currently checked out, because without a working tree the verification sub-agents can't read files at the MR's tip or grep neighbors."
 ---
 
 # /mr-review
@@ -8,7 +8,7 @@ description: "MANUAL INVOCATION ONLY. Trigger this skill exclusively when the us
 End-to-end review of the open MR on the current branch. The skill orchestrates four jobs that are easy to do badly when done by hand:
 
 1. Gather intent (ticket + MR description) so review findings can be judged against the *goal*, not just the diff.
-2. Run `superpowers:requesting-code-review` to get an initial set of findings.
+2. Run `parallel-code-review` to get an initial set of findings.
 3. Verify each finding by re-reading the actual code, because reviewers (human or LLM) routinely flag things that aren't really problems or whose recommendations don't actually work.
 4. Let the user curate which findings get posted, then post them to GitLab as line-anchored diff notes.
 
@@ -353,7 +353,7 @@ Don't paste the entire finding object. Don't include verification metadata in th
 - **`AI_SKILLS_MR_TOOL` is not `glab`** — stop early with a message pointing at the Config section. Don't attempt the workflow with `gh`; the diff-note API shape is completely different.
 - **`glab mr view` returns nothing** — no MR on the branch. Tell the user, suggest `glab mr create --draft` if they want one (omit `--reviewer` unless `$AI_SKILLS_REVIEWERS` is set), and stop.
 - **Stale local branch** — if `git fetch` shows the remote has commits you don't, the review will be against old code. Surface this and ask whether to pull first.
-- **`requesting-code-review` returns no findings** — perfectly valid. Still produce the discrepancy report from step 4 (if any) and stop without posting.
+- **`parallel-code-review` returns no findings** — perfectly valid. Still produce the discrepancy report from step 4 (if any) and stop without posting.
 - **Tracker MCP unavailable** — proceed without the ticket. Note "ticket unavailable" in the discrepancy report.
 - **Findings with invented line numbers** — when the sub-agent reports `issue_real: no` because the cited line doesn't contain the cited problem, treat it as a hallucination, not a real finding.
 

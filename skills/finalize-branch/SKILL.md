@@ -72,7 +72,7 @@ digraph finalize {
     node [shape=box];
 
     preflight [label="Pre-flight checks"];
-    review [label="Step 1: requesting-code-review"];
+    review [label="Step 1: parallel-code-review"];
     verify [label="Fan out sub-agents\nto verify each finding"];
     curate [label="Curation checklist\n(pre-selected by recommendation)" shape=diamond];
     fix [label="Fix selected findings\n+ commit"];
@@ -324,6 +324,7 @@ Return the MR/PR URL when done.
 
 **Pairs with:**
 - **superpowers:executing-plans** — invoke this skill after plan execution completes
-- **superpowers:requesting-code-review** — Step 1 sub-skill
+- **parallel-code-review** — Step 1 finder (fans out specialist reviewers)
+- **superpowers:requesting-code-review** — fallback finder if parallel-code-review is unavailable
 - **simplify** (code-simplifier) — Step 2 sub-skill
 - **squash** — Step 3 sub-skill
