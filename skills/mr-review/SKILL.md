@@ -235,7 +235,14 @@ Aggregate the results into a single table keyed by finding id.
 **7a. Pre-prompt presentation.** Print — in this order:
 
 1. **The discrepancy report from step 4** in plain text. Not selectable; it's context the user needs to decide what to post.
-2. **A short summary of each finding** — one block per finding, 2–4 sentences: what's wrong, why it matters, and what verification concluded (including any corrected diagnosis). This is the *detail layer*; the checkbox options later stay minimal because the detail already lives here.
+2. **A short summary of each finding** — one block per finding. This is the *detail layer*; the checkbox options later stay minimal because the detail already lives here. Each block carries three labelled lines so the user reads the issue and the fix together:
+
+   ```
+   ### F1 — [medium] service.py:62 — every dropdown click rewrites user_roles
+   **Issue:** <2–4 sentences: what's wrong and why it matters>
+   **Suggested fix:** <the recommendation, made concrete — the actual change to post>
+   **Verification:** ✓ issue real, fix sound   (or ⚠ risky: <caveat> / ⚠ corrected diagnosis: <…>)
+   ```
 3. **An overview table at the end** — the *scan layer* the user reads right before ticking:
 
    ```

@@ -26,7 +26,7 @@ Detect by matching the args case-insensitively against `^(yolo|--yolo|auto|-y)$`
 
 **What yolo does NOT change:**
 - Pre-flight checks still run and still stop the workflow on failure.
-- Step 1's curation checklist (verification fan-out + pre-selected fixes) still runs — the user picks which findings to address.
+- Step 1's presentation + curation prompts (verification fan-out, then Recommended/Optional prompts) still run — the user picks which findings to address.
 - The `squash` sub-skill has its own internal confirmation; we don't override that, surface it to the user as-is.
 - The squash skill's diff-verification (no changes lost) still runs.
 
@@ -74,7 +74,8 @@ digraph finalize {
     preflight [label="Pre-flight checks"];
     review [label="Step 1: parallel-code-review"];
     verify [label="Fan out sub-agents\nto verify each finding"];
-    curate [label="Curation checklist\n(pre-selected by recommendation)" shape=diamond];
+    present [label="Present summaries + table\nEND TURN, wait for reply"];
+    curate [label="Sequential curation prompts\n(Recommended, then Optional)" shape=diamond];
     fix [label="Fix selected findings\n+ commit"];
     gate1 [label="User confirms\n(skipped in yolo)" shape=diamond];
     simplify [label="Step 2: Simplify\n(auto-applies in yolo)"];
@@ -84,7 +85,7 @@ digraph finalize {
     mr [label="Step 4: Create MR"];
     done [label="Done" shape=doublecircle];
 
-    preflight -> review -> verify -> curate -> fix -> gate1;
+    preflight -> review -> verify -> present -> curate -> fix -> gate1;
     gate1 -> simplify [label="proceed"];
     simplify -> gate2 -> squash [label="proceed"];
     squash -> gate3 -> mr [label="proceed"];
@@ -94,7 +95,7 @@ digraph finalize {
 
 ### Step 1: Code Review (with verification + curation)
 
-This step is identical in both gated and yolo modes — the curation checklist *is* the gate.
+This step is identical in both gated and yolo modes — the curation prompts *are* the gate.
 
 **REQUIRED SUB-SKILL:** Use `parallel-code-review` to generate findings — it fans out 5 dimension-specialist reviewers and returns the deduped findings list this step consumes. (Falls back to `superpowers:requesting-code-review` only if `parallel-code-review` is unavailable.)
 
@@ -154,19 +155,47 @@ Be specific. Do not parrot the finding back — actually look at the code. Under
 
 Aggregate the results into a table keyed by finding id.
 
-**1c. Present the curation checklist** via `AskUserQuestion` with `multiSelect: true`.
+**1c. Present the findings — then END YOUR TURN.** Before any `AskUserQuestion`, the user must be able to read what each finding *is*, what the *suggested fix* is, and what verification concluded. Print, in this order:
 
-- **Pre-checked** (place first in the option list, mark "(Recommended)" in label): `issue_real == yes` AND severity ∈ {`high`, `medium`} AND `fix_sound != no`.
-- **Unchecked but shown**: nits, partial-real issues, risky fixes — the user may still want to fix them.
-- **Excluded entirely**: `issue_real == no` AND `fix_sound == no` — these are hallucinations. List them briefly in plain text above the checklist so the user knows they were dropped.
+1. **A short summary of each finding** — one block per finding. This is the *detail layer*; the checkbox options later stay minimal because the detail already lives here.
 
-Option label format: `[F3 medium] services.py:120 — duplicate enum 'Afdeling'`. Use the `description` field for the one-line issue summary plus a verification badge like `✓ verified, fix sound` or `⚠ lines shifted to 125-128`.
+   ```
+   ### F1 — [medium] services.py:120 — duplicate enum 'Afdeling'
+   **Issue:** <2–4 sentences: what's wrong and why it matters>
+   **Suggested fix:** <the recommendation, made concrete — the actual change to apply>
+   **Verification:** ✓ issue real, fix sound   (or ⚠ lines shifted to 125–128 / ⚠ fix risky: <one-line caveat> / ⚠ partial — corrected diagnosis: <…>)
+   ```
 
-If there are more than 4 options total, batch into successive `AskUserQuestion` calls (4 per question), grouped by severity so heavy hitters come first.
+2. **An overview table at the end** — the *scan layer* the user reads right before deciding:
 
-**1d. Fix the selected findings, commit.** Skip any the user did not select. Commit with a message like `fix: address code-review findings (F1, F3, F5)`.
+   ```
+   | ID | Sev | Anchor | Real? | Fix sound? | Bucket |
+   |----|-----|--------|-------|------------|--------|
+   | F1 | medium | services.py:120 | ✓ yes | ✓ yes | Recommended |
+   | F2 | low | (file-level) | ✓ yes | ⚠ risky | Optional |
+   ```
 
-**1e. Gate transition:**
+**Then END YOUR TURN.** The presentation must be a complete assistant message with **no `AskUserQuestion` in the same turn** — the dialog seizes screen focus the moment it fires, so a same-turn prompt buries the analysis and the user picks findings they never read. Putting the report "before" the prompt *within one turn* does **not** satisfy this. Wait for the user's reply (a "go", a question about a finding, or a re-classification) and only then send the curation prompts in 1d.
+
+**Excluded findings** (`issue_real == no` AND `fix_sound == no` — hallucinations) are **not** shown as options. List them in a brief "dropped, and why" line inside the presentation so the user knows they were considered.
+
+**1d. Curation prompts** (in the turn *after* the user replies to 1c). Classify each shown finding into one bucket, then run **sequential** `AskUserQuestion` calls with `multiSelect: true` — never one combined dialog:
+
+| Bucket | Rule | Prompt |
+|---|---|---|
+| **Recommended** | `issue_real == yes` AND severity ∈ {`high`, `medium`} AND `fix_sound != no` | Prompt 1 |
+| **Optional** | shown but not recommended: nits, `partial` real issues, `risky` fixes | Prompt 2 |
+
+- **Prompt 1** — only the Recommended bucket. Question text makes clear every option is skill-recommended; user unticks to drop. **Wait for the answer before Prompt 2.**
+- **Prompt 2** — only the Optional bucket. Empty selection is the expected default; user ticks to opt in. Skip this prompt if the bucket is empty.
+
+**Keep option labels minimal** — the detail already appeared in 1c. Label: `[F3 medium] services.py:120 — duplicate enum 'Afdeling'` (ID + severity + anchor + headline). The `description` field carries **only** the verification badge (`✓ verified, fix sound`, `⚠ lines shifted to 125–128`) — no summary sentences.
+
+If a bucket exceeds 4 options, batch within the bucket across consecutive prompts (4 per call), grouped by severity so heavy hitters come first. Never mix buckets in one prompt; finish all Recommended prompts before the first Optional one.
+
+**1e. Fix the selected findings, commit.** Skip any the user did not select. Commit with a message like `fix: address code-review findings (F1, F3, F5)`.
+
+**1f. Gate transition:**
 - **Gated mode:** Ask "Proceed to Step 2 (simplify)?" before continuing.
 - **Yolo mode:** Skip the confirmation — proceed directly to Step 2 in the same turn.
 
@@ -294,11 +323,13 @@ Return the MR/PR URL when done.
 ## Red Flags
 
 **Never:**
-- Skip the Step 1 curation checklist — even in yolo mode, the user selects which findings to fix. Yolo only skips gates *between* steps, not within Step 1.
+- Skip the Step 1 curation prompts — even in yolo mode, the user selects which findings to fix. Yolo only skips gates *between* steps, not within Step 1.
+- Fire an `AskUserQuestion` in the **same turn** as the 1c presentation — the report must end its own turn and the user must reply before the first curation prompt. Same-turn text-then-dialog buries the analysis under the dialog.
+- Cram finding detail (issue text, suggested fix) into `AskUserQuestion` option `description` fields — descriptions truncate and the detail belongs in the 1c summaries. Options stay minimal (ID + severity + anchor + headline + verification badge).
+- Combine Recommended and Optional into one dialog — they are sequential prompts (Recommended first, wait, then Optional).
 - Skip a gate between Steps 1–3 **in gated mode** — every one needs user confirmation in default mode
 - Treat anything other than the documented yolo aliases (`yolo`, `--yolo`, `auto`, `-y`) as yolo — ask the user instead of guessing
-- Skip pre-selecting findings by recommendation — the curation checklist must come pre-checked based on severity + verification, not blank
-- Skip the verification fan-out — pre-selected findings are only trustworthy if sub-agents have confirmed each one
+- Skip the verification fan-out — bucket classification is only trustworthy if sub-agents have confirmed each one
 - Apply unverified code-simplifier suggestions in yolo without printing a summary the user can scan
 - Force-push without the squash skill's verification passing
 - Prefix the MR/PR title with `Draft:` or `WIP:` — use the tool's draft flag instead
@@ -310,8 +341,9 @@ Return the MR/PR URL when done.
 - Detect the yolo argument before starting — announce it explicitly so the user can interrupt if they didn't mean it
 - Compute BASE_SHA as merge-base, never use the remote target branch directly
 - Dispatch finding-verification sub-agents in parallel (single message, many tool calls)
-- Pre-check curation options for `issue_real == yes` AND severity ∈ {high, medium} AND `fix_sound != no`; leave the rest unchecked
-- Drop hallucinated findings (`issue_real == no` AND `fix_sound == no`) from the checklist and list them briefly above it
+- Present per-finding summaries (Issue / Suggested fix / Verification) + an overview table in a turn that **ends**, before any curation prompt
+- Classify findings into Recommended (`issue_real == yes` AND severity ∈ {high, medium} AND `fix_sound != no`) vs Optional (everything else shown); run them as two sequential prompts
+- Drop hallucinated findings (`issue_real == no` AND `fix_sound == no`) from the prompts and list them briefly in the 1c presentation
 - Commit fixes from each step before proceeding to the next
 - Use the tool from `$AI_SKILLS_MR_TOOL` (default `gh`) for MR/PR creation
 - Run lint and format before any commits (project-specific; if your project has them, run them)
