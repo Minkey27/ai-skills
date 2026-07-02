@@ -128,7 +128,7 @@ Invoke `parallel-code-review` with these SHAs.
 
 If line numbers aren't provided, leave them null and treat the finding as file-level. Do not invent line numbers — wrong anchors mislead the user later.
 
-**1b. Fan out to verify each finding in parallel.** Single message, one sub-agent per finding (use the `general-purpose` Agent type). Each sub-agent gets:
+**1b. Fan out to verify each finding in parallel.** Single message, one sub-agent per finding (use the `general-purpose` Agent type, `model: sonnet` — verification is a bounded read-and-judge task that runs cheaper/faster on Sonnet 5; the finders stay on the session model for recall). Each sub-agent gets:
 
 ```
 Verify this code-review finding against the actual code on the current branch.

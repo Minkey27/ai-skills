@@ -211,7 +211,7 @@ If `line_start` / `line_end` aren't given, do not invent them — leave null and
 
 ### 6. Fan out to verify findings
 
-For every finding, dispatch a sub-agent **in parallel** (single message, many tool calls). Each sub-agent gets a self-contained brief:
+For every finding, dispatch a sub-agent **in parallel** (single message, many tool calls) using the `general-purpose` Agent type with `model: sonnet` — verification is a bounded read-and-judge task that runs cheaper/faster on Sonnet 5, while the finder pass stays on the session model for recall. Each sub-agent gets a self-contained brief:
 
 ```
 Verify this code-review finding against the actual code on the current branch.
