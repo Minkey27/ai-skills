@@ -52,16 +52,18 @@ That makes the variables available to every shell Claude spawns. Commands below 
 Before starting, verify all three conditions. Stop if any fails.
 
 ```bash
-# 1. Not on main
-[ "$(git branch --show-current)" = "main" ] && echo "STOP: on main" && exit 1
+TARGET="${AI_SKILLS_TARGET_BRANCH:-main}"
+
+# 1. Not on the target branch
+[ "$(git branch --show-current)" = "$TARGET" ] && echo "STOP: on $TARGET" && exit 1
 
 # 2. Clean working tree
 git status --porcelain | grep -q . && echo "STOP: uncommitted changes" && exit 1
 
-# 3. Has commits ahead of main
-git fetch origin main --quiet
-MERGE_BASE=$(git merge-base origin/main HEAD)
-[ "$(git rev-parse HEAD)" = "$MERGE_BASE" ] && echo "STOP: no commits ahead of main" && exit 1
+# 3. Has commits ahead of the target branch
+git fetch origin "$TARGET" --quiet
+MERGE_BASE=$(git merge-base "origin/$TARGET" HEAD)
+[ "$(git rev-parse HEAD)" = "$MERGE_BASE" ] && echo "STOP: no commits ahead of $TARGET" && exit 1
 ```
 
 ## The Process
@@ -99,11 +101,11 @@ This step is identical in both gated and yolo modes — the curation prompts *ar
 
 **REQUIRED SUB-SKILL:** Use `parallel-code-review` to generate findings — it fans out 5 dimension-specialist reviewers and returns the deduped findings list this step consumes. (Falls back to `superpowers:requesting-code-review` only if `parallel-code-review` is unavailable.)
 
-Compute SHAs using the merge-base (never `origin/main` directly):
+Compute SHAs using the merge-base against the target branch (never the remote branch directly):
 
 ```bash
-git fetch origin main --quiet
-BASE_SHA=$(git merge-base origin/main HEAD)
+git fetch origin "${AI_SKILLS_TARGET_BRANCH:-main}" --quiet
+BASE_SHA=$(git merge-base "origin/${AI_SKILLS_TARGET_BRANCH:-main}" HEAD)
 HEAD_SHA=$(git rev-parse HEAD)
 ```
 
@@ -114,7 +116,7 @@ Invoke `parallel-code-review` with these SHAs.
 ```
 {
   "id": "F1",
-  "severity": "high|medium|low|nit",
+  "severity": "critical|high|medium|low|nit",
   "file": "path/to/file.py",
   "line_start": 42,
   "line_end": 42,
@@ -177,14 +179,18 @@ Aggregate the results into a table keyed by finding id.
 
 **Then END YOUR TURN.** The presentation must be a complete assistant message with **no `AskUserQuestion` in the same turn** — the dialog seizes screen focus the moment it fires, so a same-turn prompt buries the analysis and the user picks findings they never read. Putting the report "before" the prompt *within one turn* does **not** satisfy this. Wait for the user's reply (a "go", a question about a finding, or a re-classification) and only then send the curation prompts in 1d.
 
-**Excluded findings** (`issue_real == no` AND `fix_sound == no` — hallucinations) are **not** shown as options. List them in a brief "dropped, and why" line inside the presentation so the user knows they were considered.
+**Excluded findings** (`issue_real == no` — verified false positives) are **not** shown as options. List them in a brief "dropped, and why" line inside the presentation so the user knows they were considered.
 
 **1d. Curation prompts** (in the turn *after* the user replies to 1c). Classify each shown finding into one bucket, then run **sequential** `AskUserQuestion` calls with `multiSelect: true` — never one combined dialog:
 
 | Bucket | Rule | Prompt |
 |---|---|---|
-| **Recommended** | `issue_real == yes` AND severity ∈ {`high`, `medium`} AND `fix_sound != no` | Prompt 1 |
-| **Optional** | shown but not recommended: nits, `partial` real issues, `risky` fixes | Prompt 2 |
+| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND severity ∈ {`critical`, `high`, `medium`} | Prompt 1 |
+| **Optional** | shown but not recommended: `low`/`nit` severity, or `fix_sound == risky` (real but the fix has caveats) | Prompt 2 |
+
+> **Precedence:** the rules overlap for a `medium`+ finding with `fix_sound == risky` — the risky clause wins and the finding goes to **Optional**, regardless of severity. A fix with caveats should not be auto-recommended; the user opts in with the caveat visible in the badge.
+
+> **Why `partial` counts as real.** A `partial` verdict usually means the *bug* is real but the reviewer's diagnosis of *how* it triggers was wrong. Fix the corrected version from the verification report, not the original claim.
 
 - **Prompt 1** — only the Recommended bucket. Question text makes clear every option is skill-recommended; user unticks to drop. **Wait for the answer before Prompt 2.**
 - **Prompt 2** — only the Optional bucket. Empty selection is the expected default; user ticks to opt in. Skip this prompt if the bucket is empty.
@@ -193,7 +199,7 @@ Aggregate the results into a table keyed by finding id.
 
 If a bucket exceeds 4 options, batch within the bucket across consecutive prompts (4 per call), grouped by severity so heavy hitters come first. Never mix buckets in one prompt; finish all Recommended prompts before the first Optional one.
 
-**1e. Fix the selected findings, commit.** Skip any the user did not select. Commit with a message like `fix: address code-review findings (F1, F3, F5)`.
+**1e. Fix the selected findings, commit.** Skip any the user did not select. Commit with a message that names what was fixed (e.g. `fix: close idor on document download, dedupe afdeling enum`) — never session-local finding ids (`F1`, `F3`), which mean nothing in git history.
 
 **1f. Gate transition:**
 - **Gated mode:** Ask "Proceed to Step 2 (simplify)?" before continuing.
@@ -235,7 +241,7 @@ Push the branch and create the MR.
 git push -u origin "$(git branch --show-current)"
 ```
 
-**Generate MR content — no approval gate. The user has opted into auto-accept, so thoroughness replaces the gate.**
+**Generate MR content — no separate content-approval gate.** The transition into this step was already confirmed (the Step 3→4 gate in gated mode, the yolo opt-in otherwise), so thoroughness replaces a content gate.
 
 Before drafting, read the full scope of the branch so the title/description reflect *all* the changes, not just the last commit subject:
 
@@ -342,8 +348,8 @@ Return the MR/PR URL when done.
 - Compute BASE_SHA as merge-base, never use the remote target branch directly
 - Dispatch finding-verification sub-agents in parallel (single message, many tool calls)
 - Present per-finding summaries (Issue / Suggested fix / Verification) + an overview table in a turn that **ends**, before any curation prompt
-- Classify findings into Recommended (`issue_real == yes` AND severity ∈ {high, medium} AND `fix_sound != no`) vs Optional (everything else shown); run them as two sequential prompts
-- Drop hallucinated findings (`issue_real == no` AND `fix_sound == no`) from the prompts and list them briefly in the 1c presentation
+- Classify findings into Recommended (`issue_real ∈ {yes, partial}` AND `fix_sound != no` AND severity ∈ {critical, high, medium}) vs Optional (everything else shown); `fix_sound == risky` goes to Optional regardless of severity; run them as two sequential prompts
+- Drop verified false positives (`issue_real == no`) from the prompts and list them briefly in the 1c presentation
 - Commit fixes from each step before proceeding to the next
 - Use the tool from `$AI_SKILLS_MR_TOOL` (default `gh`) for MR/PR creation
 - Run lint and format before any commits (project-specific; if your project has them, run them)

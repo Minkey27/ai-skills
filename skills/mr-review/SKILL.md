@@ -1,6 +1,6 @@
 ---
 name: mr-review
-description: "MANUAL INVOCATION ONLY. Trigger this skill exclusively when the user types the literal slash command `/mr-review`. Do NOT trigger on natural-language phrases like 'review the MR', 'review this branch', 'let's review', or any other variation — those must be handled without this skill unless the user explicitly types the slash form. When invoked, runs a full GitLab MR review on the currently checked-out branch: optionally fetches a linked ticket (when a tracker MCP is available), reads the MR description, runs `parallel-code-review`, verifies each finding with parallel sub-agents, surfaces intent discrepancies between ticket/description/diff, and posts the findings the user approves back to the MR as line-anchored diff notes. Works for any MR the user has checked out — their own pre-flight self-review or a teammate's branch. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't currently checked out, because without a working tree the verification sub-agents can't read files at the MR's tip or grep neighbors."
+description: "MANUAL INVOCATION ONLY. Trigger exclusively when the user types the literal slash command `/mr-review` — never on natural-language phrases like 'review the MR' or 'review this branch'. Reviews the GitLab MR of the currently checked-out branch and posts user-approved findings back as line-anchored diff notes. Works for the user's own MR or a teammate's. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't checked out. Supports `--dry-run`."
 ---
 
 # /mr-review
@@ -38,14 +38,14 @@ This skill reads optional config via the `AI_SKILLS_*` env vars. Recommended set
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `AI_SKILLS_MR_TOOL` | `gh` | Must be `glab` for this skill. If unset or `gh`, the skill stops with a "GitLab-only" message. |
+| `AI_SKILLS_MR_TOOL` | _(auto-detect)_ | Must resolve to `glab`. If unset, detect from `git remote get-url origin` (URL contains "gitlab" → `glab`). If it resolves to anything else, the skill stops with a "GitLab-only" message. |
 | `AI_SKILLS_TICKET_PREFIX` | _(empty)_ | Ticket prefix (e.g. `PROJ`). Empty → match any uppercase slug like `FOO-123`. |
 
 Ticket lookup additionally depends on which tracker MCP is available in the session — see Step 2. The skill works without any tracker MCP; it just skips the intent-from-ticket step.
 
 ## Hard rules
 
-- **GitLab only.** Check `${AI_SKILLS_MR_TOOL:-gh}` early. If not `glab`, stop and tell the user this skill targets GitLab; for GitHub, suggest running `superpowers:requesting-code-review` directly.
+- **GitLab only.** Resolve the tool early: `AI_SKILLS_MR_TOOL` if set, else auto-detect from the origin remote URL. If it doesn't resolve to `glab`, stop and tell the user this skill targets GitLab; for GitHub, suggest running `superpowers:requesting-code-review` directly.
 - **Branch must match.** Confirm the current branch is the MR's source branch via `glab mr view --output json`. If not, stop and tell the user — switching branches mid-review is the user's call, not yours.
 - **Never post without confirmation.** Even if every finding looks great, present the checklist and wait for the user to pick. Posting to GitLab is irreversible (notifications fire, threads exist forever).
 - **Presentation and curation prompts never share a turn.** Step 7a (discrepancy report + finding summaries + overview table) must end the assistant turn; the first `AskUserQuestion` goes in a *later* turn, after the user has replied. A same-turn prompt visually preempts the analysis — the dialog takes focus and the user picks findings without having read the verification results. Text order within a turn does not count as "presenting before prompting".
@@ -61,8 +61,10 @@ Ticket lookup additionally depends on which tracker MCP is available in the sess
 First gate on the tool:
 
 ```bash
-if [ "${AI_SKILLS_MR_TOOL:-gh}" != "glab" ]; then
-  echo "STOP: /mr-review is GitLab-only. Set AI_SKILLS_MR_TOOL=glab to use it."
+TOOL="${AI_SKILLS_MR_TOOL:-}"
+[ -z "$TOOL" ] && git remote get-url origin 2>/dev/null | grep -qi gitlab && TOOL=glab
+if [ "$TOOL" != "glab" ]; then
+  echo "STOP: /mr-review is GitLab-only. Set AI_SKILLS_MR_TOOL=glab or use a GitLab remote."
   exit 1
 fi
 ```
@@ -84,16 +86,24 @@ Capture: MR `iid`, `source_branch`, `target_branch`, `title`, `description`, `we
 
 Confirm current branch matches `source_branch`. If not, stop and surface the mismatch.
 
-Get the unified diff so later steps can identify added/removed/context lines for accurate position payloads:
+Get the unified diff so later steps can identify added/removed/context lines for accurate position payloads. Reuse the values captured from the `glab mr view` JSON above — do **not** re-invoke bare `glab mr view` here (it errors again in the multi-MR case the disambiguation just handled):
 
 ```bash
-git fetch origin "$(glab mr view -F json | jq -r .target_branch)" --quiet
-BASE_SHA=$(git merge-base "origin/$(glab mr view -F json | jq -r .target_branch)" HEAD)
-HEAD_SHA=$(git rev-parse HEAD)
-git diff --unified=0 "$BASE_SHA"..HEAD
+git fetch origin "$TARGET_BRANCH" --quiet   # target_branch from the captured JSON
+
+# Guard: the local tip must be exactly the MR's head. Unpushed local commits (or
+# an unpulled remote) make line math and verification diverge from what GitLab shows.
+[ "$(git rev-parse HEAD)" = "$DIFF_HEAD_SHA" ] || {
+  echo "STOP: local HEAD != diff_refs.head_sha — push or pull so the working tree matches the MR tip."
+  exit 1
+}
+
+BASE_SHA="$DIFF_BASE_SHA"    # diff_refs.base_sha from the captured JSON
+HEAD_SHA="$DIFF_HEAD_SHA"    # diff_refs.head_sha
+git diff --unified=0 "$BASE_SHA".."$HEAD_SHA"
 ```
 
-> **Note:** `BASE_SHA` here is the local merge-base for line-math during posting. The `diff_refs.base_sha` from GitLab is what goes in the position payload — keep them distinct.
+> **Note:** review range, line math, and the position payload all use GitLab's `diff_refs` SHAs. The guard above makes the working tree safe for verification sub-agents — after it passes, `HEAD` and `diff_refs.head_sha` are the same commit.
 
 ### 2. Find the ticket (optional)
 
@@ -185,7 +195,7 @@ When it produces findings, capture them in a structured list:
 [
   {
     "id": "F1",
-    "severity": "high|medium|low|nit",
+    "severity": "critical|high|medium|low|nit",
     "file": "path/to/file.py",
     "line_start": 42,
     "line_end": 42,
@@ -347,7 +357,7 @@ Also restate any **Excluded** findings from step 7 with one-line "why excluded" 
 Each note body should follow this shape so reviewers see consistent, scannable comments:
 
 ```markdown
-**<short title>** — severity: <high|medium|low|nit>
+**<short title>** — severity: <critical|high|medium|low|nit>
 
 <issue paragraph: what's wrong and why it matters>
 
@@ -358,9 +368,9 @@ Don't paste the entire finding object. Don't include verification metadata in th
 
 ## Failure modes to watch for
 
-- **`AI_SKILLS_MR_TOOL` is not `glab`** — stop early with a message pointing at the Config section. Don't attempt the workflow with `gh`; the diff-note API shape is completely different.
+- **Tool doesn't resolve to `glab`** (env var says otherwise, or auto-detect finds no GitLab remote) — stop early with a message pointing at the Config section. Don't attempt the workflow with `gh`; the diff-note API shape is completely different.
 - **`glab mr view` returns nothing** — no MR on the branch. Tell the user, suggest `glab mr create --draft` if they want one (omit `--reviewer` unless `$AI_SKILLS_REVIEWERS` is set), and stop.
-- **Stale local branch** — if `git fetch` shows the remote has commits you don't, the review will be against old code. Surface this and ask whether to pull first.
+- **Local tip doesn't match the MR** — `git rev-parse HEAD` ≠ `diff_refs.head_sha`. Either the remote has commits you don't (pull) or you have unpushed commits (push). Stop until they match — anchors and verification would otherwise run against code the MR doesn't have. The Step 1 guard enforces this.
 - **`parallel-code-review` returns no findings** — perfectly valid. Still produce the discrepancy report from step 4 (if any) and stop without posting.
 - **Tracker MCP unavailable** — proceed without the ticket. Note "ticket unavailable" in the discrepancy report.
 - **Findings with invented line numbers** — when the sub-agent reports `issue_real: no` because the cited line doesn't contain the cited problem, treat it as a hallucination, not a real finding.
