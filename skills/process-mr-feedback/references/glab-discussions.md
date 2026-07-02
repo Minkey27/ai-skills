@@ -49,6 +49,7 @@ Example — list unresolved resolvable threads with anchor + body:
 ```bash
 glab api "projects/:id/merge_requests/:iid/discussions?per_page=100" --paginate \
   | jq -r '.[]
+           | select(.notes[0].system != true)
            | select(.notes[0].resolvable == true)
            | select([.notes[] | select(.resolved == false)] | length > 0)
            | {id,
@@ -104,3 +105,22 @@ the reply, then (if `resolve`) PUTting `resolved=true`, capturing each response 
 and the per-request cost (a few hundred ms) is negligible next to the verification work already
 done. Capture each reply's `id` (note id) to build a clickable `{web_url}#note_{id}` for the
 receipt.
+
+**Auth: the helper must shell out to `glab api` via `subprocess`** — never extract a token
+(`glab auth status --show-token`, `GITLAB_TOKEN`, config files) into the script or an env var to
+call the REST API directly with `urllib`/`requests`. A materialized token can leak via transcript,
+shell history, or process listing; `glab` keeps the credential inside its own process.
+
+```python
+import json, subprocess
+
+def reply(project, iid, discussion_id, body, resolve):
+    subprocess.run(
+        ["glab", "api", f"projects/{project}/merge_requests/{iid}/discussions/{discussion_id}/notes",
+         "--method", "POST", "--header", "Content-Type: application/json", "--input", "-"],
+        input=json.dumps({"body": body}), text=True, check=True)
+    if resolve:
+        subprocess.run(
+            ["glab", "api", f"projects/{project}/merge_requests/{iid}/discussions/{discussion_id}?resolved=true",
+             "--method", "PUT"], check=True)
+```

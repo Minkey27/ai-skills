@@ -1,6 +1,6 @@
 ---
 name: process-mr-feedback
-description: "Use when processing review feedback on a GitLab merge request you have checked out — working through the open discussion threads a reviewer (a human, or an automated/LLM diff-note) left on the MR. Fetches the unresolved resolvable threads via `glab`, verifies each finding against the current code, presents them with suggested fixes and a proposed disposition (Fix / Push back / Dismiss / Defer) for you to curate, then implements the accepted fixes, runs the project's configured lint/format/tests, commits, and — behind a single confirmation — pushes and posts a reply + resolves each thread. Triggers on phrases like 'process the review feedback', 'address the MR comments', 'work through the review threads', 'handle the review comments'. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't currently checked out, because it needs a working tree to verify findings and apply fixes."
+description: "Use when processing review feedback on a GitLab merge request you have checked out — working through the unresolved discussion threads a reviewer (a human, or an automated/LLM diff-note) left on the MR. Triggers on phrases like 'process the review feedback', 'address the MR comments', 'work through the review threads', 'handle the review comments'. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't currently checked out, because it needs a working tree to verify findings and apply fixes."
 ---
 
 # process-mr-feedback
@@ -151,6 +151,7 @@ Tasks:
 
 Report (under 150 words):
   - validity: valid | invalid | needs-clarification — one-sentence reason
+  - invalid_kind (only if invalid): reviewer-misread | already-handled | not-applicable
   - suggested_fix: the concrete change (only if valid)
   - corrected_anchor: <right path:line if the cited one was wrong>
   - notes: anything else worth knowing
@@ -235,16 +236,29 @@ fix.
 **Pre-commit verification gate** (portable — no hardcoded toolchain):
 
 ```bash
-# Lint + format — empty var means skip (print a note).
-[ -n "$AI_SKILLS_LINT_CMD" ]   && eval "$AI_SKILLS_LINT_CMD"   || echo "AI_SKILLS_LINT_CMD unset — skipping lint"
-[ -n "$AI_SKILLS_FORMAT_CMD" ] && eval "$AI_SKILLS_FORMAT_CMD" || echo "AI_SKILLS_FORMAT_CMD unset — skipping format"
+# Lint + format — empty var means skip (print a note). Use if/else, NOT `[ -n ] && eval || echo`:
+# the && … || form routes a FAILING command into the "skipped" branch and exits 0, defeating the gate.
+if [ -n "$AI_SKILLS_LINT_CMD" ]; then
+  eval "$AI_SKILLS_LINT_CMD"     # non-zero exit = gate failure — STOP
+else
+  echo "AI_SKILLS_LINT_CMD unset — skipping lint"
+fi
+if [ -n "$AI_SKILLS_FORMAT_CMD" ]; then
+  eval "$AI_SKILLS_FORMAT_CMD"   # non-zero exit = gate failure — STOP
+else
+  echo "AI_SKILLS_FORMAT_CMD unset — skipping format"
+fi
 ```
 
 For **tests**: if the session exposes a project test-runner skill (e.g. a `pytest-docker`-style
 skill), invoke that skill instead of running the raw command. Otherwise:
 
 ```bash
-[ -n "$AI_SKILLS_TEST_CMD" ] && eval "$AI_SKILLS_TEST_CMD" || echo "WARNING: AI_SKILLS_TEST_CMD unset — tests NOT run"
+if [ -n "$AI_SKILLS_TEST_CMD" ]; then
+  eval "$AI_SKILLS_TEST_CMD"     # non-zero exit = gate failure — STOP
+else
+  echo "WARNING: AI_SKILLS_TEST_CMD unset — tests NOT run"
+fi
 ```
 
 **If lint, format, or tests fail → STOP here.** Surface the failure and do **not** proceed to the
