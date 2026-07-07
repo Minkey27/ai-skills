@@ -6,12 +6,17 @@ description: Use when you need a high-recall code-review finding pass over a git
 # parallel-code-review
 
 A high-recall finder. Where a single reviewer surfaces the obvious few issues,
-this fans out five specialist reviewers — each with its full attention on one
+this fans out specialist reviewers — each with its full attention on one
 lane — then dedupes. It does **finding only**: verification, curation, and posting
 stay with the caller (`finalize-branch`, `mr-review`, or you, ad-hoc).
 
 **Core principle:** recall is set by the finder; precision is set by whoever
 verifies afterward. This skill maximizes recall and hands a clean list onward.
+
+**Cost principle:** each subagent pays a fixed context overhead (system prompt +
+injected project instructions) before doing any work — agent *count* is the cost
+lever. Finder count therefore scales with diff size (see Tiering); lanes are
+never dropped, only combined into fewer agents on small diffs.
 
 **Announce at start:** "Using parallel-code-review to fan out specialist reviewers over the diff."
 
@@ -50,27 +55,59 @@ Severity scale: `critical` / `high` / `medium` / `low` / `nit`.
 ```dot
 digraph pcr {
   rankdir=TB; node [shape=box];
-  dispatch [label="Dispatch 5 finders\n(single message, parallel)"];
-  collect  [label="Barrier: collect all 5" shape=diamond];
+  tier     [label="Measure diff → pick tier\n(git diff --stat)"];
+  dispatch [label="Dispatch finders\n(single message, parallel)"];
+  collect  [label="Barrier: collect all" shape=diamond];
   dedup    [label="Merge + dedup\n(plain reasoning)"];
   emit     [label="Emit unified findings list"];
-  dispatch -> collect -> dedup -> emit;
+  tier -> dispatch -> collect -> dedup -> emit;
 }
 ```
 
-### Step 1: Dispatch the 5 finders in ONE message
+### Step 0: Measure the diff and pick a tier
+
+Run once, in your own context (not in a finder):
+
+```bash
+git diff --stat {BASE_SHA}..{HEAD_SHA}
+```
+
+From the output, note **total changed lines** (insertions + deletions) and the
+**file list**. Pick the tier:
+
+| Condition (check top-down, first match wins) | Finders dispatched |
+|---|---|
+| Diff touches only docs (`*.md`, `docs/`) | 1 finder: conventions |
+| Diff touches only test files | 1 finder: correctness + conventions + tests combined |
+| Total changed lines < 150 | 2 finders: (correctness + security), (conventions + tests + architecture/performance) |
+| Total changed lines ≥ 150 | 5 finders: one per lane |
+
+All five lanes are always *covered* — small tiers combine lanes into one agent's
+brief rather than dropping them. A combined finder receives multiple lane briefs
+and tags each finding's `source` with the specific lane it belongs to.
+
+State the chosen tier and line count before dispatching (e.g. "312 changed lines
+→ full 5-finder tier").
+
+### Step 1: Dispatch the finders in ONE message
 
 Read [references/specialist-briefs.md](references/specialist-briefs.md). Dispatch
-**five `general-purpose` subagents in a single message** (parallel tool calls).
-Each gets the shared preamble (with `BASE_SHA`/`HEAD_SHA` filled in) plus exactly
-one lane brief: correctness, conventions, tests, security, architecture/performance.
+the tier's `general-purpose` subagents **in a single message** (parallel tool
+calls). Each gets the shared preamble (with `BASE_SHA`/`HEAD_SHA` and the file
+list from Step 0 filled in) plus its lane brief(s).
 
-Do not collapse lanes into fewer agents — the separation is what produces the
-recall gain. Do not add chunking; each finder sees the whole diff once.
+**Model per finder:** if the harness supports a per-agent model override, dispatch
+the *conventions* and *tests* finders on a cheaper tier (e.g. `sonnet`) — those
+lanes are mechanical rule/coverage checking. Correctness, security, and
+architecture finders inherit the session model. A combined finder containing
+correctness or security always inherits the session model.
+
+Do not go below the tier's finder count — the lane separation is what produces
+the recall gain. Do not add chunking; each finder sees the whole diff once.
 
 ### Step 2: Collect (barrier)
 
-Wait for all five. If a finder **fails or returns nothing parseable**, do not abort
+Wait for all dispatched finders. If a finder **fails or returns nothing parseable**, do not abort
 the review — record `"<lane> finder failed — coverage incomplete"` and continue
 with the survivors. Note it in the summary so the caller knows recall was reduced.
 
@@ -103,7 +140,10 @@ Stop here — verification, curation, and any posting belong to the caller.
 ## Red flags
 
 **Never:**
-- Collapse the 5 lanes into fewer subagents.
+- Dispatch fewer finders than the tier prescribes, or drop a lane from coverage —
+  small tiers combine lanes, they do not remove them.
+- Skip Step 0 and default to 5 finders "to be safe" — measuring the diff costs one
+  `--stat`; five agents on a 40-line diff costs ~100k tokens of fixed overhead.
 - Recompute `BASE_SHA`/`HEAD_SHA` when a caller passed them.
 - Use a custom agent type — `general-purpose` only.
 - Verify, curate, fix, or post findings — that is the caller's job.
@@ -111,7 +151,8 @@ Stop here — verification, curation, and any posting belong to the caller.
 
 **Always:**
 - Dispatch all finders in a single message (true parallelism).
-- Auto-discover rule files for the conventions lane; degrade to `[]` if none.
+- State tier + changed-line count before dispatching.
+- Auto-discover non-injected rule files for the conventions lane; degrade to `[]` if none.
 - Union `source` and keep highest severity when merging dupes.
 
 ## Integration

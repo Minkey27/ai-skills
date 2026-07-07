@@ -99,7 +99,7 @@ digraph finalize {
 
 This step is identical in both gated and yolo modes — the curation prompts *are* the gate.
 
-**REQUIRED SUB-SKILL:** Use `parallel-code-review` to generate findings — it fans out 5 dimension-specialist reviewers and returns the deduped findings list this step consumes. (Falls back to `superpowers:requesting-code-review` only if `parallel-code-review` is unavailable.)
+**REQUIRED SUB-SKILL:** Use `parallel-code-review` to generate findings — it fans out dimension-specialist reviewers (count tiered by diff size) and returns the deduped findings list this step consumes. (Falls back to `superpowers:requesting-code-review` only if `parallel-code-review` is unavailable.)
 
 Compute SHAs using the merge-base against the target branch (never the remote branch directly):
 

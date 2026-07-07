@@ -1,8 +1,18 @@
 # Specialist Finder Briefs
 
-Each finder is a `general-purpose` subagent. Dispatch all five in a SINGLE message
-(many parallel tool calls). Give each subagent the **shared preamble** below with
-`{BASE_SHA}` / `{HEAD_SHA}` filled in, followed by exactly one lane brief.
+Each finder is a `general-purpose` subagent. Dispatch the tier's finders (chosen
+in SKILL.md Step 0) in a SINGLE message (parallel tool calls). Give each subagent
+the **shared preamble** below with `{BASE_SHA}` / `{HEAD_SHA}` / `{FILE_LIST}`
+filled in, followed by its lane brief(s).
+
+**Combined finders (small tiers):** concatenate the assigned lane briefs after
+the preamble and add this line: "You cover multiple lanes. For each finding, set
+`source` to the specific lane it belongs to." Lane text is used verbatim — do not
+rewrite briefs when combining.
+
+**Model:** conventions-only and tests-only finders may run on a cheaper model
+(e.g. `sonnet`). Any finder whose brief includes correctness or security inherits
+the session model.
 
 ## Shared preamble (prepend to every finder)
 
@@ -15,9 +25,14 @@ Git range to review:
   git diff --stat {BASE_SHA}..{HEAD_SHA}
   git diff {BASE_SHA}..{HEAD_SHA}
 
+Files changed in this range (from git diff --stat):
+{FILE_LIST}
+
 This review is READ-ONLY. Do not mutate the working tree, index, HEAD, or branches.
 Use git show / git diff / git log to inspect. Read surrounding files for context —
-do not review the diff in isolation.
+do not review the diff in isolation. Context reads are BOUNDED: read only files
+touched by the diff plus their direct callers/callees (found via grep). Do not
+explore the codebase beyond that.
 
 For every issue you find, emit one object in this exact schema:
   - id:           leave blank (the orchestrator assigns ids)
@@ -49,10 +64,15 @@ performance, or test gaps — those are other lanes.
 
 ```
 LANE: conventions — DOCUMENTED project rules only.
-First, discover the repo's rule files (only those that exist):
-  CLAUDE.md (root AND nested, e.g. tests/CLAUDE.md), CLAUDE.local.md, AGENTS.md,
-  .cursor/rules (file or dir), .github/copilot-instructions.md.
-Read them, but check ONLY the rules relevant to the files in this diff (a
+Rule sources, in order:
+1. Rule files ALREADY INJECTED into your context as project instructions
+   (typically root CLAUDE.md, CLAUDE.local.md, nested CLAUDE.md). Use the
+   injected copy — do NOT re-read these from disk; that duplicates thousands
+   of tokens you already have.
+2. Rule files NOT in your context — discover and Read only those that exist
+   and are absent from your context: nested CLAUDE.md (e.g. tests/CLAUDE.md),
+   AGENTS.md, .cursor/rules (file or dir), .github/copilot-instructions.md.
+Check ONLY the rules relevant to the files in this diff (a
 template-only diff skips repository/ORM rules, etc.). For each violation, cite the
 rule (quote it) AND the diff line that breaks it. If no rule files exist, return [].
 Do NOT invent rules or flag undocumented preferences — that is the architecture lane.
