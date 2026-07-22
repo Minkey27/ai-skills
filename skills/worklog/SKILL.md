@@ -37,6 +37,20 @@ write the human summary. Never compute hours yourself — always run the script.
      outcome when commits exist.
    - Add a **Totals** row from `meta.totals`.
 
+3a. **Picked up / Finished, when the user wants a per-day narrative** (e.g. for a
+   worklog doc entry, not just the timesheet table). Derive these directly from
+   `subjects` — do not re-derive them from prompts or guess:
+   - **Picked up today**: rows where `started_in_window` is `true` — the ticket's
+     very first session (across all history, not just this window) falls inside
+     the requested window. A ticket worked on again today after earlier days is
+     *not* "picked up" — only its first-ever touch counts.
+   - **Finished / merged today**: rows where `merged_commits` is non-empty — a
+     `Merge branch '...'` commit landed in this window. A ticket can have local
+     commits (`commits`) without being merged; only `merged_commits` means done.
+   - Render each as a short bullet list: ticket + a few words from `subject`/
+     `titles` (Picked up), or ticket + the merge commit's branch/subject
+     (Finished/Merged). Omit either list if empty — don't print "none".
+
 4. **Merge** rows that are obviously the same task — e.g. a `main`/title row that
    is plainly the same work as a ticket row worked later. State any merge you make.
 

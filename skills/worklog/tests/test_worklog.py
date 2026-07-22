@@ -235,6 +235,19 @@ def test_build_report_filters_outside_window():
     assert rows["BPZ-756 x"]["session_count"] == 1
 
 
+def test_build_report_marks_started_vs_continued_ticket():
+    sessions = [
+        # touched long before the window, and again today -> continued, not started
+        _sess("s1", "T", "/repo", [(-1000, "bpz-700-old"), (0, "bpz-700-old")]),
+        # first ever touch falls inside the window -> started today
+        _sess("s2", "T", "/repo", [(5, "bpz-701-new")]),
+    ]
+    report = worklog.build_report(sessions, **_scope())
+    rows = {r["subject"]: r for r in report["subjects"]}
+    assert rows["BPZ-700 old"]["started_in_window"] is False
+    assert rows["BPZ-701 new"]["started_in_window"] is True
+
+
 # --- Task 9: discover_session_files -----------------------------------------
 def test_discover_session_files(tmp_path):
     proj = tmp_path / "-Users-x-Projects-deurdoor"

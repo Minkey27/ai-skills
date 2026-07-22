@@ -219,19 +219,25 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
     subjects = {}
     unattributed = {}
     contributing_sessions = set()
+    # Earliest-ever timestamp per subject key, in scope, regardless of window —
+    # lets us tell "worked on again today" apart from "picked up today".
+    first_seen = {}
 
     for session in sessions:
         for event in session["events"]:
             ts = event["ts"]
-            if not (start <= ts <= end):
-                continue
             cwd = event.get("cwd") or session.get("cwd")
             branch = event.get("branch")
+            in_window = start <= ts <= end
             if in_scope(cwd, branch, repo_root, live_worktrees, known_branches):
-                contributing_sessions.add(session.get("session_id"))
                 key, label = derive_subject(
                     branch, session.get("ai_title"), ticket_prefix, session.get("session_id")
                 )
+                if key not in first_seen or ts < first_seen[key]:
+                    first_seen[key] = ts
+                if not in_window:
+                    continue
+                contributing_sessions.add(session.get("session_id"))
                 agg = subjects.setdefault(key, {
                     "subject": label,
                     "ticket": key if is_ticket_key(key) else None,
@@ -251,7 +257,7 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
                 for prompt in session.get("prompts", [])[:2]:
                     if prompt not in agg["prompts"]:
                         agg["prompts"].append(prompt)
-            elif under_any(cwd, worktree_parents):
+            elif in_window and under_any(cwd, worktree_parents):
                 bucket = unattributed.setdefault((cwd, branch), {
                     "branch": branch, "cwd": cwd, "timestamps": [],
                 })
@@ -259,7 +265,7 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
 
     subject_rows = []
     total_wall = total_active = 0.0
-    for agg in subjects.values():
+    for key, agg in subjects.items():
         timeline = sorted(agg["timestamps"])
         wall = (timeline[-1] - timeline[0]).total_seconds() / 60.0 if len(timeline) > 1 else 0.0
         active = active_minutes(timeline)
@@ -273,10 +279,12 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
             "session_count": len(agg["sessions"]),
             "first": timeline[0].isoformat(),
             "last": timeline[-1].isoformat(),
+            "started_in_window": first_seen[key] >= start,
             "titles": sorted(agg["titles"]),
             "branches": sorted(agg["branches"]),
             "prompt_samples": agg["prompts"][:4],
             "commits": [],  # filled by main() via git enrichment
+            "merged_commits": [],  # filled by main() via git enrichment
         })
     subject_rows.sort(key=lambda row: row["active_min"], reverse=True)
 
@@ -361,7 +369,9 @@ def _enrich_commits(report, repo_root, start_utc, end_utc, author):
         commits = []
         for branch in row["branches"]:
             commits.extend(by_branch.get(branch, []))
-        row["commits"] = sorted(set(commits))[:8]
+        unique_sorted = sorted(set(commits))
+        row["commits"] = unique_sorted[:8]
+        row["merged_commits"] = [c for c in unique_sorted if _MERGE_RE.match(c)]
 
 
 def main(argv=None):
