@@ -213,8 +213,15 @@ def parse_session(lines):
 
 
 def build_report(sessions, *, window, repo_root, live_worktrees,
-                 known_branches, worktree_parents, ticket_prefix):
-    """Turn parsed sessions into the full report dict (subjects + meta)."""
+                 known_branches, worktree_parents, ticket_prefix,
+                 owned_branches=None):
+    """Turn parsed sessions into the full report dict (subjects + meta).
+
+    `owned_branches`, when given, is the set of feature branches the user
+    personally authored commits on. Branch-derived subjects whose branches
+    are all absent from it are treated as reviews (someone else's branch that
+    was merely checked out) and routed to `meta.reviews` instead of counting
+    as own work. `None` disables the split (every subject stays as work)."""
     start, end = window
     subjects = {}
     unattributed = {}
@@ -264,14 +271,13 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
                 bucket["timestamps"].append(ts)
 
     subject_rows = []
+    review_rows = []
     total_wall = total_active = 0.0
     for key, agg in subjects.items():
         timeline = sorted(agg["timestamps"])
         wall = (timeline[-1] - timeline[0]).total_seconds() / 60.0 if len(timeline) > 1 else 0.0
         active = active_minutes(timeline)
-        total_wall += wall
-        total_active += active
-        subject_rows.append({
+        row = {
             "subject": agg["subject"],
             "ticket": agg["ticket"],
             "wallclock_min": round(wall, 1),
@@ -285,8 +291,24 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
             "prompt_samples": agg["prompts"][:4],
             "commits": [],  # filled by main() via git enrichment
             "merged_commits": [],  # filled by main() via git enrichment
-        })
+        }
+        # A branch-derived subject (ticket or plain feature branch, not a
+        # main/title/untitled row) with no branch the user authored on is a
+        # review of someone else's work, not work the user did.
+        branch_derived = not key.startswith(("title:", "untitled:"))
+        is_review = (
+            owned_branches is not None
+            and branch_derived
+            and not any(b in owned_branches for b in agg["branches"])
+        )
+        if is_review:
+            review_rows.append(row)
+        else:
+            total_wall += wall
+            total_active += active
+            subject_rows.append(row)
     subject_rows.sort(key=lambda row: row["active_min"], reverse=True)
+    review_rows.sort(key=lambda row: row["active_min"], reverse=True)
 
     unattributed_rows = []
     for bucket in unattributed.values():
@@ -309,6 +331,7 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
             "sessions_counted": len(contributing_sessions),
             "totals": {"wallclock_min": round(total_wall, 1), "active_min": round(total_active, 1)},
             "unattributed": unattributed_rows,
+            "reviews": review_rows,
         },
         "subjects": subject_rows,
     }
@@ -333,6 +356,55 @@ def build_known_branches(repo_root):
     ]))
     merged = parse_merge_branches(_git(repo_root, ["log", "--merges", "--format=%s"]))
     return {b for b in (refs | merged) if b.lower() not in GENERIC_BRANCHES}
+
+
+_BASE_REF_CANDIDATES = (
+    "main", "master", "develop",
+    "origin/main", "origin/master", "origin/develop",
+)
+
+
+def build_owned_branches(repo_root, author, known_branches):
+    """Feature branches the user personally authored commits on.
+
+    A branch is "owned" if ANY of:
+    (a) the user authored a commit reachable from the branch but NOT from the
+        mainline — real unmerged work on the branch, not commits inherited from
+        main;
+    (b) the user authored the `Merge branch '<branch>'` commit that landed it
+        (merge-commit workflows); or
+    (c) the branch has no commits ahead of main (already fast-forward/rebase
+        merged, or empty) and its tip commit was authored by the user — the
+        linear-history equivalent of (b), where merged commits now live on main
+        so (a) finds nothing.
+    A teammate's branch merely checked out to review matches none: its unique
+    commits and its tip are authored by someone else, and the user never merged
+    it. When the author is unknown, every branch is owned so nothing is
+    misclassified."""
+    if not author:
+        return set(known_branches)
+    base = [ref for ref in _BASE_REF_CANDIDATES
+            if _git(repo_root, ["rev-parse", "--verify", "--quiet", ref])]
+    # (b) branches the user personally merged, from their own merge commits.
+    merged_by_user = set(parse_merge_branches(
+        _git(repo_root, ["log", "--merges", f"--author={author}", "--format=%s"])
+    ))
+    owned = set()
+    for branch in known_branches:
+        if branch in merged_by_user:
+            owned.add(branch)
+            continue
+        excludes = [f"^{b}" for b in base if b.replace("origin/", "") != branch]
+        # (a) own commits still ahead of the mainline.
+        if _git(repo_root, ["rev-list", "--max-count=1",
+                            f"--author={author}", branch, *excludes]):
+            owned.add(branch)
+            continue
+        # (c) nothing ahead of main -> already merged; own it iff the tip is ours.
+        tip_author = _git(repo_root, ["log", "-1", "--format=%ae", branch])
+        if tip_author and tip_author[0].strip() == author:
+            owned.add(branch)
+    return owned
 
 
 def live_worktree_paths(repo_root):
@@ -402,14 +474,17 @@ def main(argv=None):
     sessions = [parse_session(p.read_text(errors="ignore").splitlines())
                 for p in discover_session_files(args.projects_root)]
 
+    author = (_git(repo_root, ["config", "user.email"]) or
+              _git(repo_root, ["config", "user.name"]) or [""])[0].strip()
+    owned = build_owned_branches(repo_root, author, known)
+
     report = build_report(
         sessions, window=window, repo_root=repo_root, live_worktrees=set(live),
         known_branches=known, worktree_parents=worktree_parents, ticket_prefix=ticket_prefix,
+        owned_branches=owned,
     )
     report["meta"]["repo_root"] = repo_root
 
-    author = (_git(repo_root, ["config", "user.email"]) or
-              _git(repo_root, ["config", "user.name"]) or [""])[0].strip()
     if author:
         _enrich_commits(report, repo_root, *window, author)
 

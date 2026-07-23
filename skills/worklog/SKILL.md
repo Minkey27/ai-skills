@@ -50,6 +50,11 @@ write the human summary. Never compute hours yourself — always run the script.
    - Render each as a short bullet list: ticket + a few words from `subject`/
      `titles` (Picked up), or ticket + the merge commit's branch/subject
      (Finished/Merged). Omit either list if empty — don't print "none".
+   - **Reviews** live in `meta.reviews`, not `subjects` — a branch the user
+     only checked out to review (no commit authored by them on it) never counts
+     as "picked up" or own work, and is excluded from `subjects` and `totals`.
+     If the user wants review time surfaced, list `meta.reviews` under a
+     separate **Reviews** heading (same columns) and keep it out of the totals.
 
 4. **Merge** rows that are obviously the same task — e.g. a `main`/title row that
    is plainly the same work as a ticket row worked later. State any merge you make.

@@ -248,6 +248,37 @@ def test_build_report_marks_started_vs_continued_ticket():
     assert rows["BPZ-701 new"]["started_in_window"] is True
 
 
+def test_build_report_routes_unowned_branch_to_reviews():
+    # bpz-756-x is a known branch, but the user authored nothing on it -> review
+    sessions = [_sess("s1", "T", "/repo/wt-756", [(0, "bpz-756-x"), (5, "bpz-756-x")])]
+    scope = _scope()
+    scope["owned_branches"] = set()  # nothing owned
+    report = worklog.build_report(sessions, **scope)
+    assert report["subjects"] == []
+    assert report["meta"]["totals"]["active_min"] == 0.0
+    reviews = report["meta"]["reviews"]
+    assert len(reviews) == 1 and reviews[0]["subject"] == "BPZ-756 x"
+
+
+def test_build_report_owned_branch_stays_as_work():
+    sessions = [_sess("s1", "T", "/repo/wt-756", [(0, "bpz-756-x"), (5, "bpz-756-x")])]
+    scope = _scope()
+    scope["owned_branches"] = {"bpz-756-x"}
+    report = worklog.build_report(sessions, **scope)
+    assert any(r["subject"] == "BPZ-756 x" for r in report["subjects"])
+    assert report["meta"]["reviews"] == []
+
+
+def test_build_report_title_row_never_a_review():
+    # main/title rows aren't branch-derived, so an empty owned set can't demote them
+    sessions = [_sess("s1", "T", "/repo", [(0, "main"), (5, "main")])]
+    scope = _scope()
+    scope["owned_branches"] = set()
+    report = worklog.build_report(sessions, **scope)
+    assert any(r["subject"] == "T" for r in report["subjects"])
+    assert report["meta"]["reviews"] == []
+
+
 # --- Task 9: discover_session_files -----------------------------------------
 def test_discover_session_files(tmp_path):
     proj = tmp_path / "-Users-x-Projects-deurdoor"
