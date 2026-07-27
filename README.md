@@ -6,6 +6,7 @@ A personal collection of [Claude Code](https://docs.claude.com/en/docs/claude-co
 
 - **branch-test-review** — generate a styled HTML report of pytest tests added/modified on the current branch.
 - **finalize-branch** — review, simplify, squash, and open an MR for the current branch.
+- **handoff** — `/handoff` slash command: compact the current conversation into a handoff document (written to the OS temp dir) so a fresh agent can pick the work up, including a "suggested skills" section. Manual invocation only.
 - **mr-review** — `/mr-review` slash command: full review pass on the GitLab MR for the currently-checked-out branch, with per-finding verification and curated diff-note posting.
 - **parallel-code-review** — fan out 5 specialist reviewers (correctness, conventions, tests, security, architecture/performance), dedup findings, and return a structured list; invoked by finalize-branch and mr-review.
 - **process-mr-feedback** — work through the open review discussion threads on the GitLab MR for the current branch: fetch them, verify each finding against the code, curate a disposition (Fix / Push back / Dismiss / Defer), then implement, push, reply, and resolve.
@@ -54,6 +55,7 @@ Common values to set:
 | `branch-test-review` | No | `git` + Python stdlib only |
 | `squash` | No | Generic git operations |
 | `finalize-branch` | Optional | `AI_SKILLS_MR_TOOL`, `AI_SKILLS_REVIEWERS`, `AI_SKILLS_TICKET_PREFIX` |
+| `handoff` | No | `git` + a writable OS temp dir (`$TMPDIR`, falling back to `/tmp`) |
 | `mr-review` | Required | `AI_SKILLS_MR_TOOL=glab` (GitLab-only); `AI_SKILLS_TICKET_PREFIX` is optional. Skill also leverages a tracker MCP (ClickUp/Jira/Linear) if one is installed, otherwise skips the ticket step. |
 | `parallel-code-review` | No | Generic git operations |
 | `process-mr-feedback` | Required | `AI_SKILLS_MR_TOOL=glab` (GitLab-only). `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, `AI_SKILLS_TEST_CMD`, `AI_SKILLS_COMMIT_TRAILER` are optional (each step is skipped when its variable is empty; a project test-runner skill is preferred over `AI_SKILLS_TEST_CMD` when present). |
