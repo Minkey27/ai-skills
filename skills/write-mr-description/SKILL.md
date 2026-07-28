@@ -32,6 +32,8 @@ Same `AI_SKILLS_*` variables as `finalize-branch`:
 | `AI_SKILLS_TARGET_BRANCH` | `main` | Starting point for target-branch detection |
 | `AI_SKILLS_REVIEWERS` | _(empty)_ | Comma-separated reviewers; empty → omit `--reviewer` |
 | `AI_SKILLS_TICKET_PREFIX` | _(empty)_ | Ticket prefix; empty → match any uppercase slug |
+| `MR_STATE` | current worktree's `git rev-parse --git-path mr-state.sh` | Override the state-file path |
+| `MR_BODY_FILE` | current worktree's `git rev-parse --git-path mr-body.md` | Override the drafted-body path |
 
 ## The body
 
@@ -127,28 +129,36 @@ directory does. So a value decided in one step and needed in a later one is pers
 state file, and every later block re-sources that file before using it:
 
 ```bash
-STATE="${MR_STATE:-/tmp/mr-state.sh}"
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
 ```
 
 `$STATE` is not itself carried state — it's a constant expression, re-derived identically in
-every block. Step 1 starts by truncating the file (`: > "$STATE"`), so a file left behind by
-an earlier run can never leak into this one. Every later block instead does `. "$STATE"`.
+every block. It lands under the current worktree's git directory (`git rev-parse --git-path`
+resolves to `<main-repo>/.git/worktrees/<name>/mr-state.sh` in a linked worktree), never in
+shared `/tmp` — two concurrent worktrees can never collide on the same file, and the path is
+outside the working tree so it never trips step 1's `git status --porcelain` check. Step 1
+starts by truncating the file (`: > "$STATE"`), so a file left behind by an earlier run can
+never leak into this one. Every later block instead does `. "$STATE"`.
 
 Persisted across steps, via `printf '%q'` (so spaces and shell metacharacters survive the
-round trip) appended to `$STATE`: `$BRANCH`, `$NEEDS_PUSH` (step 1), `$TARGET` (step 2),
-`$BASE_SHA` (step 3), `$TICKET` (step 4), `$BODY`, `$TITLE` (step 5), `$COUNT`, `$IID`
-(step 8). `$TARGET_DEFAULT`, `$BEST`, `$BEST_N`, `$WORDS`, `$OPEN`, `$REVIEWER_FLAG` are used
-and discarded within the single block that computes them — they never need to survive to a
-later invocation.
+round trip) appended to `$STATE`: `$BRANCH`, `$NEEDS_PUSH`, `$UPSTREAM_SHA` (step 1), `$TARGET`
+(step 2), `$BASE_SHA` (step 3), `$TICKET` (step 4), `$BODY`, `$TITLE` (step 5), `$IID`
+(step 8). `$TARGET_DEFAULT`, `$BEST`, `$BEST_N`, `$WORDS`, `$OPEN`, `$COUNT`, `$REVIEWER_FLAG`
+are used and discarded within the single block that computes them — they never need to
+survive to a later invocation.
 
 ### 1. State check
 
 ```bash
-STATE="${MR_STATE:-/tmp/mr-state.sh}"
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
 : > "$STATE"
 
 BRANCH=$(git branch --show-current)
 git status --porcelain | grep -q . && echo "STOP: uncommitted changes" && exit 1
+
+# Captured now, before step 2's `git fetch` can move the remote-tracking ref — this is the
+# value the force-push lease in step 8 pins against. Empty when there is no upstream yet.
+UPSTREAM_SHA=$(git rev-parse "@{u}" 2>/dev/null || true)
 
 if git rev-parse --abbrev-ref --symbolic-full-name "@{u}" >/dev/null 2>&1; then
   UNPUSHED=$(git rev-list --count "@{u}..HEAD")
@@ -159,6 +169,7 @@ fi
 
 printf 'BRANCH=%q\n' "$BRANCH" >> "$STATE"
 printf 'NEEDS_PUSH=%q\n' "$NEEDS_PUSH" >> "$STATE"
+printf 'UPSTREAM_SHA=%q\n' "$UPSTREAM_SHA" >> "$STATE"
 ```
 
 Refuse on a dirty tree — the diff you describe must be the diff that gets pushed. `$NEEDS_PUSH`
@@ -166,7 +177,8 @@ tests for **unpushed commits**, not merely for a configured upstream — an upst
 already exists but is behind (e.g. after `finalize-branch`'s squash step rewrites history)
 still needs a push. If the branch has no upstream, push it in step 8; do not push before the
 target branch is settled. A post-squash push may be rejected as non-fast-forward — step 8
-retries with `--force-with-lease` when that happens.
+retries with a `--force-with-lease` pinned to `$UPSTREAM_SHA` (captured here, before step 2's
+fetch) when that happens.
 
 ### 2. Target branch
 
@@ -174,7 +186,7 @@ Never assume `main`. Branches are frequently stacked on an epic branch, and reta
 stacked branch at `main` proposes merging unreviewed upstream work.
 
 ```bash
-STATE="${MR_STATE:-/tmp/mr-state.sh}"
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
 . "$STATE"
 
 TARGET_DEFAULT="${AI_SKILLS_TARGET_BRANCH:-main}"
@@ -225,7 +237,7 @@ handing the win to whatever merged-in sibling branch happens to still be an ance
 The diff is what you write from. Read all three, in order:
 
 ```bash
-STATE="${MR_STATE:-/tmp/mr-state.sh}"
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
 . "$STATE"
 
 BASE_SHA=$(git merge-base "origin/$TARGET" HEAD)
@@ -242,7 +254,7 @@ which pulls unrelated upstream commits into the diff you are describing.
 ### 4. Ticket
 
 ```bash
-STATE="${MR_STATE:-/tmp/mr-state.sh}"
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
 . "$STATE"
 
 PATTERN="${AI_SKILLS_TICKET_PREFIX:-[A-Z]+}-[0-9]+"
@@ -263,10 +275,10 @@ derive `Why` from the diff and commit messages, and say so in your final report.
 ### 5. Draft to `$BODY`
 
 ```bash
-STATE="${MR_STATE:-/tmp/mr-state.sh}"
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
 . "$STATE"
 
-BODY="${MR_BODY_FILE:-/tmp/mr-body.md}"
+BODY="${MR_BODY_FILE:-$(git rev-parse --git-path mr-body.md)}"
 cat > "$BODY" <<'EOF'
 Closes <ticket from step 4, or drop this line>
 
@@ -282,10 +294,12 @@ printf 'TITLE=%q\n' "$TITLE" >> "$STATE"
 ```
 
 Draft `$TITLE` alongside the body, following the `## Title` section's rules, and check it
-against the 72-char budget there. If the environment mandates a scratchpad directory instead
-of `/tmp`, set `MR_BODY_FILE` (or assign `BODY` directly) to a path inside it — every later
-step re-sources `$BODY` from `$STATE` rather than hardcoding the path, so the step that writes
-the file and the steps that read it cannot drift apart.
+against the 72-char budget there. By default `$BODY` lands under the current worktree's git
+directory alongside `$STATE`, so concurrent worktrees never share a path. If the environment
+mandates a scratchpad directory instead, set `MR_STATE` and/or `MR_BODY_FILE` (or assign
+`BODY` directly) to a path inside it — every later step re-sources `$BODY` from `$STATE`
+rather than hardcoding the path, so the step that writes the file and the steps that read it
+cannot drift apart.
 
 Check for `.gitlab/merge_request_templates/`. If a template exists, note it in your final
 report but do not follow it — this format wins.
@@ -303,12 +317,15 @@ from the file list or the code itself, cut it.**
 ### 7. Word gate
 
 ```bash
-STATE="${MR_STATE:-/tmp/mr-state.sh}"
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
 . "$STATE"
 
 WORDS=$(wc -w < "$BODY" | tr -d ' ')
 echo "body: $WORDS words"
-[ "$WORDS" -gt 200 ] && echo "OVER BUDGET — cut, do not create" && exit 1
+if [ "$WORDS" -gt 200 ]; then
+  echo "OVER BUDGET — cut, do not create"
+  exit 1
+fi
 ```
 
 Over budget means cut. It does not mean create it anyway and mention the overrun.
@@ -316,11 +333,17 @@ Over budget means cut. It does not mean create it anyway and mention the overrun
 ### 8. Create or update
 
 ```bash
-STATE="${MR_STATE:-/tmp/mr-state.sh}"
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
 . "$STATE"
 
 if [ "${NEEDS_PUSH:-0}" = "1" ]; then
-  git push -u origin "$BRANCH" || git push --force-with-lease -u origin "$BRANCH"
+  if [ -z "${UPSTREAM_SHA:-}" ]; then
+    # No upstream existed at step 1 — nothing to protect, a first push cannot clobber.
+    git push -u origin "$BRANCH"
+  else
+    git push -u origin "$BRANCH" \
+      || git push --force-with-lease="refs/heads/$BRANCH:$UPSTREAM_SHA" -u origin "$BRANCH"
+  fi
 fi
 
 OPEN=$(glab api "projects/:id/merge_requests?source_branch=$BRANCH&state=opened" \
@@ -329,20 +352,26 @@ COUNT=$(printf '%s\n' $OPEN | grep -c . || true)
 IID=$(printf '%s\n' $OPEN | head -1)
 echo "open MRs on $BRANCH: ${COUNT:-0} (${OPEN:-none})"
 
-printf 'COUNT=%q\n' "${COUNT:-0}" >> "$STATE"
 printf 'IID=%q\n' "${IID:-}" >> "$STATE"
 ```
 
 Several MRs can share one source branch, and `glab mr view` errors when it is ambiguous. The
 plain `git push` above can be rejected as non-fast-forward when an earlier step (e.g.
-`finalize-branch`'s squash) already pushed this branch and then rewrote its history — the
-`--force-with-lease` retry handles that case without clobbering anyone else's work.
+`finalize-branch`'s squash) already pushed this branch and then rewrote its history. The
+retry pins `--force-with-lease` to `$UPSTREAM_SHA` — the upstream tip captured in step 1,
+**before** step 2's `git fetch origin` ran. An unpinned `--force-with-lease` re-reads the
+remote-tracking ref at push time, and step 2 already refreshed that ref to match whatever is
+on the remote right now — including a teammate's commit pushed in between — so the lease
+would authorise the exact overwrite it exists to prevent. Pinning to the pre-fetch SHA is
+what makes the lease reject a push when the remote moved out from under this branch. `$COUNT`
+is not persisted — nothing downstream reads it back; the three-way branch below is decided by
+inspecting the `echo` output, not by sourcing `$STATE`.
 
 - Exactly one open MR → update it in place, including the target branch, so a stale MR never
   points at the wrong one:
 
   ```bash
-  STATE="${MR_STATE:-/tmp/mr-state.sh}"
+  STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
   . "$STATE"
 
   glab mr update "$IID" --description "$(cat "$BODY")" --title "$TITLE" --target-branch "$TARGET"
@@ -351,7 +380,7 @@ plain `git push` above can be rejected as non-fast-forward when an earlier step 
 - None → create:
 
   ```bash
-  STATE="${MR_STATE:-/tmp/mr-state.sh}"
+  STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
   . "$STATE"
 
   REVIEWER_FLAG=""
