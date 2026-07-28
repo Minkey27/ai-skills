@@ -235,27 +235,39 @@ The squash skill has its own internal gates that this skill does NOT override (i
 
 ### Step 4: Create MR
 
-Push the branch and create the MR.
+**REQUIRED SUB-SKILL (GitLab):** when `${AI_SKILLS_MR_TOOL:-gh}` is `glab`, delegate this
+step to `write-mr-description`. It owns pushing the branch, detecting the target branch,
+reading the branch scope, extracting and fetching the ticket, drafting the body within its
+budgets, and creating or updating the MR with the required flags. Do not draft a body here
+and do not restate its rules — pass control and report the URL it returns.
+
+Delegating matters for a reason beyond DRY: that skill runs forked, so it cannot see this
+session. A body drafted here would narrate the implementation you just did.
+
+**When `${AI_SKILLS_MR_TOOL:-gh}` is `gh`,** `write-mr-description` does not apply (it is
+GitLab-only). Draft the body here following **the structure, budgets and banned list in
+`write-mr-description`'s `SKILL.md`** — read that file rather than reproducing its rules,
+so the two paths cannot drift. In short: `Closes <TICKET>` first line, `## Why` (prose),
+`## What` (≤5 bullets), `## Caveats` (usually omitted), 200 words hard, no test plan.
+
+Then:
 
 ```bash
 git push -u origin "$(git branch --show-current)"
+
+REVIEWER_FLAG=""
+[ -n "${AI_SKILLS_REVIEWERS:-}" ] && REVIEWER_FLAG="--reviewer $AI_SKILLS_REVIEWERS"
+
+gh pr create \
+  --title "$TITLE" \
+  --body "$(cat /tmp/mr-body.md)" \
+  --base "${AI_SKILLS_TARGET_BRANCH:-main}" \
+  --draft \
+  --assignee @me \
+  $REVIEWER_FLAG
 ```
 
-**Generate MR content — no separate content-approval gate.** The transition into this step was already confirmed (the Step 3→4 gate in gated mode, the yolo opt-in otherwise), so thoroughness replaces a content gate.
-
-Before drafting, read the full scope of the branch so the title/description reflect *all* the changes, not just the last commit subject:
-
-```bash
-BASE_SHA=$(git merge-base "origin/${AI_SKILLS_TARGET_BRANCH:-main}" HEAD)
-
-# All commits on the branch with bodies
-git log --reverse --format='%s%n%n%b' $BASE_SHA..HEAD
-
-# File-level scope check — confirm the diff matches what the commits claim
-git diff --stat $BASE_SHA..HEAD
-```
-
-**Extract ticket reference.** Check the branch name first, then commit subjects/bodies. Use the first match. Pattern: `${AI_SKILLS_TICKET_PREFIX:-[A-Z]+}-[0-9]+`.
+Extract the ticket for the `Closes` line the same way `write-mr-description` does:
 
 ```bash
 PATTERN="${AI_SKILLS_TICKET_PREFIX:-[A-Z]+}-[0-9]+"
@@ -267,62 +279,13 @@ fi
 echo "Ticket: ${TICKET:-<none>}"
 ```
 
-If a ticket was found, include `Closes <TICKET>` as the first line of the description (above `## Summary`). If no ticket was found, omit the line entirely — do not invent one and do not leave a placeholder.
+`Closes <TICKET>` goes on the first line, written exactly in that form — keyword, space,
+ticket ID, nothing else. Omit the line entirely when no ticket was found; never invent one
+and never leave a placeholder.
 
-Draft:
-- **Title** (under 70 chars): describe the most significant outcome of the branch, not just the first commit subject. If the branch does one thing, name that thing. If it does several, name the theme.
-- **Description:**
-  - `Closes <TICKET>` — only when a ticket reference was found.
-  - `## Summary` — bullets explaining WHAT changed and WHY. Use as many bullets as needed; every meaningful change on the branch should be represented.
-  - `## Test plan` — bullets covering how to verify the change.
-
-Announce the chosen title and description in your response (so the user sees what was decided), then create the MR in the same turn without waiting.
-
-**Required flags on every MR created by this skill:**
-- Draft marker — via the tool's draft flag (the boolean), **not** by prefixing `Draft:`/`WIP:` to the title.
-- Reviewers — from `$AI_SKILLS_REVIEWERS` if set; omit `--reviewer` entirely if empty.
-- Assignee — `@me`. Both `gh` and `glab` resolve this to the authenticated user.
-
-**Tool-specific invocation** — `gh` and `glab` differ on flag names. Pick the block matching `$AI_SKILLS_MR_TOOL` (default `gh`):
-
-```bash
-# Build the reviewer flag only when AI_SKILLS_REVIEWERS is non-empty
-REVIEWER_FLAG=""
-[ -n "${AI_SKILLS_REVIEWERS:-}" ] && REVIEWER_FLAG="--reviewer $AI_SKILLS_REVIEWERS"
-
-if [ "${AI_SKILLS_MR_TOOL:-gh}" = "glab" ]; then
-  glab mr create \
-    --title "$TITLE" \
-    --description "$DESCRIPTION" \
-    --target-branch "${AI_SKILLS_TARGET_BRANCH:-main}" \
-    --draft \
-    --assignee @me \
-    $REVIEWER_FLAG
-else
-  gh pr create \
-    --title "$TITLE" \
-    --body "$DESCRIPTION" \
-    --base "${AI_SKILLS_TARGET_BRANCH:-main}" \
-    --draft \
-    --assignee @me \
-    $REVIEWER_FLAG
-fi
-```
-
-Where `$DESCRIPTION` is the heredoc-built body:
-
-```bash
-DESCRIPTION="$(cat <<EOF
-${TICKET:+Closes $TICKET
-
-}## Summary
-<bullet points>
-
-## Test plan
-<verification steps>
-EOF
-)"
-```
+**Why the exact form matters:** downstream automation (Zapier → ClickUp) parses this line
+out of the MR description to transition the ticket's status. A reworded, reformatted or
+missing line means the ticket silently never advances.
 
 Return the MR/PR URL when done.
 
@@ -339,9 +302,11 @@ Return the MR/PR URL when done.
 - Apply unverified code-simplifier suggestions in yolo without printing a summary the user can scan
 - Force-push without the squash skill's verification passing
 - Prefix the MR/PR title with `Draft:` or `WIP:` — use the tool's draft flag instead
-- Draft MR title/description from the last commit subject alone — read the full branch scope first
 - Invent or hallucinate a ticket number — only include `Closes <TICKET>` if the reference actually appears in the branch name or commits
 - Leave a literal `<TICKET>` placeholder in the description — strip the line entirely when no ticket is found
+- Draft the MR body inside this skill when `AI_SKILLS_MR_TOOL=glab` — Step 4 delegates to `write-mr-description`, which runs forked precisely so it cannot narrate this session
+- Restate `write-mr-description`'s format rules in the `gh` path — reference that file instead, or the two copies drift
+- Add a dedicated test-plan/QA-steps section (or any reviewer QA script) to an MR body
 
 **Always:**
 - Detect the yolo argument before starting — announce it explicitly so the user can interrupt if they didn't mean it
@@ -353,7 +318,7 @@ Return the MR/PR URL when done.
 - Commit fixes from each step before proceeding to the next
 - Use the tool from `$AI_SKILLS_MR_TOOL` (default `gh`) for MR/PR creation
 - Run lint and format before any commits (project-specific; if your project has them, run them)
-- Read `git log` and `git diff --stat` over `BASE_SHA..HEAD` before drafting MR title/description — thoroughness replaces the removed approval gate
+- Delegate Step 4 to `write-mr-description` on GitLab; on GitHub, read that skill's SKILL.md for the format before drafting
 - Pass `--draft` and `--assignee @me` on every invocation
 - Only add `--reviewer` when `$AI_SKILLS_REVIEWERS` is non-empty
 - Extract a ticket reference before drafting; if one exists, prepend `Closes <TICKET>` as the first line of the description
@@ -366,3 +331,4 @@ Return the MR/PR URL when done.
 - **superpowers:requesting-code-review** — fallback finder if parallel-code-review is unavailable
 - **simplify** (code-simplifier) — Step 2 sub-skill
 - **squash** — Step 3 sub-skill
+- **write-mr-description** — Step 4 sub-skill on GitLab (owns push, target detection, body, and MR creation)
