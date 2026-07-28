@@ -118,3 +118,149 @@ to about three sentences; find the load-bearing one rather than asking for more 
 
 A real 653-word description and the same change in 164 words:
 [references/examples.md](references/examples.md). Read it before drafting.
+
+## Steps
+
+### 1. State check
+
+```bash
+BRANCH=$(git branch --show-current)
+git status --porcelain | grep -q . && echo "STOP: uncommitted changes" && exit 1
+git rev-parse --abbrev-ref --symbolic-full-name "@{u}" >/dev/null 2>&1 || NEEDS_PUSH=1
+```
+
+Refuse on a dirty tree — the diff you describe must be the diff that gets pushed. If the
+branch has no upstream, push it in step 8; do not push before the target branch is settled.
+
+### 2. Target branch
+
+Never assume `main`. Branches are frequently stacked on an epic branch, and retargeting a
+stacked branch at `main` proposes merging unreviewed upstream work.
+
+```bash
+TARGET_DEFAULT="${AI_SKILLS_TARGET_BRANCH:-main}"
+git fetch origin --quiet
+
+BEST=""; BEST_N=""
+for REF in $(git branch -r --merged HEAD --format='%(refname:short)' \
+             | grep -v -E "^origin/HEAD$|^origin$|^origin/${BRANCH}$"); do
+  N=$(git rev-list --count "$REF..HEAD")
+  if [ -z "$BEST_N" ] || [ "$N" -lt "$BEST_N" ]; then BEST_N=$N; BEST=$REF; fi
+done
+echo "configured default: origin/$TARGET_DEFAULT"
+echo "nearest contained:  $BEST ($BEST_N commits behind HEAD)"
+```
+
+"Nearest" is the candidate with the **fewest** commits in `<candidate>..HEAD` — on a stacked
+branch both `origin/main` and `origin/epic/…` are contained, and the epic tip is closer.
+
+- Nearest equals the configured default → use it, say nothing.
+- Nearest differs → **stop and ask** which to target. Do not guess.
+
+### 3. Read the scope
+
+The diff is what you write from. Read all three, in order:
+
+```bash
+BASE_SHA=$(git merge-base "origin/$TARGET" HEAD)
+git log --oneline "$BASE_SHA"..HEAD
+git diff --stat "$BASE_SHA"..HEAD
+git diff "$BASE_SHA"..HEAD
+```
+
+Merge-base, never `origin/$TARGET` directly — the remote can be ahead of the fork point,
+which pulls unrelated upstream commits into the diff you are describing.
+
+### 4. Ticket
+
+```bash
+PATTERN="${AI_SKILLS_TICKET_PREFIX:-[A-Z]+}-[0-9]+"
+TICKET=$(printf '%s\n' "$BRANCH" | grep -oE "$PATTERN" | head -1)
+[ -z "$TICKET" ] && TICKET=$(git log --format='%s%n%b' "$BASE_SHA"..HEAD | grep -oE "$PATTERN" | head -1)
+echo "Ticket: ${TICKET:-<none>}"
+```
+
+Then fetch it with the ClickUp tools (`clickup_get_task`, or `clickup_search` on the id)
+and read it **for intent only** — what problem was being solved. That is the one thing the
+diff cannot tell you, and it is safe to read because it predates the implementation.
+
+Do not copy the ticket's wording into `## Why`; summarise the outcome. If the lookup fails,
+derive `Why` from the diff and commit messages, and say so in your final report.
+
+### 5. Draft to `/tmp/mr-body.md`
+
+```bash
+cat > /tmp/mr-body.md <<'EOF'
+Closes BPZ-0000
+
+## Why
+
+...
+EOF
+```
+
+Check for `.gitlab/merge_request_templates/`. If a template exists, note it in your final
+report but do not follow it — this format wins.
+
+### 6. The deletion pass
+
+Before running the word gate, delete your weakest `## What` bullet. Then reread. If the
+description is still complete, that bullet was noise — and there is probably another like
+it. Repeat until removing anything would leave a real gap.
+
+Then check every surviving bullet against the diff: **if a reviewer would already know it
+from the file list or the code itself, cut it.**
+
+### 7. Word gate
+
+```bash
+WORDS=$(wc -w < /tmp/mr-body.md | tr -d ' ')
+echo "body: $WORDS words"
+[ "$WORDS" -gt 200 ] && echo "OVER BUDGET — cut, do not create" && exit 1
+```
+
+Over budget means cut. It does not mean create it anyway and mention the overrun.
+
+### 8. Create or update
+
+```bash
+[ -n "${NEEDS_PUSH:-}" ] && git push -u origin "$BRANCH"
+
+OPEN=$(glab api "projects/:id/merge_requests?source_branch=$BRANCH&state=opened" \
+  | python3 -c "import json,sys; print(' '.join(str(m['iid']) for m in json.load(sys.stdin)))")
+echo "open MRs on $BRANCH: ${OPEN:-none}"
+```
+
+Several MRs can share one source branch, and `glab mr view` errors when it is ambiguous.
+
+- Exactly one open MR → update it in place:
+
+  ```bash
+  glab mr update "$IID" --description "$(cat /tmp/mr-body.md)" --title "$TITLE"
+  ```
+
+- None → create:
+
+  ```bash
+  REVIEWER_FLAG=""
+  [ -n "${AI_SKILLS_REVIEWERS:-}" ] && REVIEWER_FLAG="--reviewer $AI_SKILLS_REVIEWERS"
+
+  glab mr create \
+    --title "$TITLE" \
+    --description "$(cat /tmp/mr-body.md)" \
+    --target-branch "$TARGET" \
+    --draft \
+    --assignee @me \
+    $REVIEWER_FLAG \
+    --yes
+  ```
+
+  `glab` has no `--description-file`, hence the command substitution.
+
+- Two or more open MRs → stop and ask which one to update.
+
+### 9. Report
+
+Print the word count, the target branch, the MR URL, and any of these that applied: the
+ticket lookup failed, a project MR template was ignored, the target branch was
+disambiguated by you.
