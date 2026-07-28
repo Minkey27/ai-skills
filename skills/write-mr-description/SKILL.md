@@ -122,9 +122,9 @@ A real 653-word description and the same change in 164 words:
 ## Steps
 
 Shell variables threaded across the steps below: `$BRANCH`, `$NEEDS_PUSH`, `$TARGET_DEFAULT`,
-`$BEST`, `$BEST_N`, `$TARGET`, `$BASE_SHA`, `$TICKET`, `$TITLE`, `$WORDS`, `$OPEN`, `$COUNT`,
-`$IID`, `$REVIEWER_FLAG` — each is assigned in the step where it first appears and consumed
-in later steps as noted.
+`$BEST`, `$BEST_N`, `$TARGET`, `$BASE_SHA`, `$TICKET`, `$BODY`, `$TITLE`, `$WORDS`, `$OPEN`,
+`$COUNT`, `$IID`, `$REVIEWER_FLAG` — each is assigned in the step where it first appears and
+consumed in later steps as noted.
 
 ### 1. State check
 
@@ -147,10 +147,17 @@ TARGET_DEFAULT="${AI_SKILLS_TARGET_BRANCH:-main}"
 git fetch origin --quiet
 
 BEST=""; BEST_N=""
-for REF in $(git branch -r --merged HEAD --format='%(refname:short)' \
+for REF in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin \
              | grep -v -E "^origin/HEAD$|^origin$|^origin/${BRANCH}$"); do
-  N=$(git rev-list --count "$REF..HEAD")
-  if [ -z "$BEST_N" ] || [ "$N" -lt "$BEST_N" ]; then BEST_N=$N; BEST=$REF; fi
+  MB=$(git merge-base "$REF" HEAD 2>/dev/null) || continue
+  # Skip refs that already contain HEAD — their merge-base IS HEAD, scoring a false 0.
+  [ "$MB" = "$(git rev-parse HEAD)" ] && continue
+  N=$(git rev-list --count "$MB..HEAD")
+  # On a tie, prefer the configured default over an arbitrary sibling branch.
+  if [ -z "$BEST_N" ] || [ "$N" -lt "$BEST_N" ] \
+     || { [ "$N" -eq "$BEST_N" ] && [ "$REF" = "origin/$TARGET_DEFAULT" ]; }; then
+    BEST_N=$N; BEST=$REF
+  fi
 done
 echo "configured default: origin/$TARGET_DEFAULT"
 echo "nearest contained:  $BEST ($BEST_N commits behind HEAD)"
@@ -164,8 +171,12 @@ fi
 echo "target: $TARGET"
 ```
 
-"Nearest" is the candidate with the **fewest** commits in `<candidate>..HEAD` — on a stacked
-branch both `origin/main` and `origin/epic/…` are contained, and the epic tip is closer.
+This iterates every ref under `refs/remotes/origin`, so it costs one `merge-base` call per
+remote branch. "Nearest" is the candidate with the **fewest** commits HEAD has accumulated
+*since diverging from it* — not the fewest commits contained by it: `--merged HEAD`
+containment breaks the moment the default branch's tip stops being an ancestor of HEAD (it
+advances past the fork point on almost every branch that isn't freshly forked), silently
+handing the win to whatever merged-in sibling branch happens to still be an ancestor.
 
 - Nearest equals the configured default → use it, say nothing.
 - Nearest differs → **stop and ask** which to target. Do not guess.
@@ -200,10 +211,11 @@ diff cannot tell you, and it is safe to read because it predates the implementat
 Do not copy the ticket's wording into `## Why`; summarise the outcome. If the lookup fails,
 derive `Why` from the diff and commit messages, and say so in your final report.
 
-### 5. Draft to `/tmp/mr-body.md`
+### 5. Draft to `$BODY`
 
 ```bash
-cat > /tmp/mr-body.md <<'EOF'
+BODY="${MR_BODY_FILE:-/tmp/mr-body.md}"
+cat > "$BODY" <<'EOF'
 Closes BPZ-0000
 
 ## Why
@@ -215,7 +227,10 @@ TITLE="Filter the project overview by assigned colleague"   # <= 72 chars, per #
 ```
 
 Draft `$TITLE` alongside the body, following the `## Title` section's rules, and check it
-against the 72-char budget there.
+against the 72-char budget there. If the environment mandates a scratchpad directory instead
+of `/tmp`, set `MR_BODY_FILE` (or assign `BODY` directly) to a path inside it — every later
+step reads `$BODY`, so the step that writes the file and the steps that read it cannot drift
+apart.
 
 Check for `.gitlab/merge_request_templates/`. If a template exists, note it in your final
 report but do not follow it — this format wins.
@@ -232,7 +247,7 @@ from the file list or the code itself, cut it.**
 ### 7. Word gate
 
 ```bash
-WORDS=$(wc -w < /tmp/mr-body.md | tr -d ' ')
+WORDS=$(wc -w < "$BODY" | tr -d ' ')
 echo "body: $WORDS words"
 [ "$WORDS" -gt 200 ] && echo "OVER BUDGET — cut, do not create" && exit 1
 ```
@@ -256,7 +271,7 @@ Several MRs can share one source branch, and `glab mr view` errors when it is am
 - Exactly one open MR → update it in place:
 
   ```bash
-  glab mr update "$IID" --description "$(cat /tmp/mr-body.md)" --title "$TITLE"
+  glab mr update "$IID" --description "$(cat "$BODY")" --title "$TITLE"
   ```
 
 - None → create:
@@ -267,7 +282,7 @@ Several MRs can share one source branch, and `glab mr view` errors when it is am
 
   glab mr create \
     --title "$TITLE" \
-    --description "$(cat /tmp/mr-body.md)" \
+    --description "$(cat "$BODY")" \
     --target-branch "$TARGET" \
     --draft \
     --assignee @me \
