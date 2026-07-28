@@ -251,10 +251,13 @@ session. A body drafted here would narrate the implementation you just did.
 **When `${AI_SKILLS_MR_TOOL:-gh}` is `gh`,** `write-mr-description` does not apply (it is
 GitLab-only). Read `~/.claude/skills/write-mr-description/SKILL.md` — follow its
 `## The body`, `## Budgets`, `## Title`, `## Never` and `## Example` sections to draft the
-title and body yourself, apply its deletion pass (step 6), and run its word gate (step 7,
-`wc -w` against `## Budgets`' cap) before creating anything — do not reproduce their contents
-here; that file is the single source of the format, and a copy in this file will drift from
-it.
+title and body yourself, then apply its deletion-pass idea (step 6: cut the weakest `## What`
+bullet, reread, repeat until removing anything would leave a real gap) before running the
+word gate yourself: count the drafted body with `wc -w` against `## Budgets`' cap (200 words)
+and cut if over — the sub-skill's own step 7 block sources a `$STATE`/`$BODY` file that only
+exists on its own delegated path, so do not point at it here; do not reproduce their contents
+here either — that file is the single source of the format, and a copy in this file will
+drift from it.
 
 Extract the ticket for the `Closes` line the same way `write-mr-description` does — before
 drafting the body, since the ticket (if any) is the body's first line:
@@ -270,12 +273,25 @@ fi
 echo "Ticket: ${TICKET:-<none>}"
 ```
 
-`Closes <TICKET>` goes first, exactly as `write-mr-description`'s `## The body` specifies.
+`Closes <TICKET>` goes first, exactly as `write-mr-description`'s `## The body` specifies —
+the exact form is machine-parsed, so a reworded line silently strands the ticket.
 
-Write the drafted title to `/tmp/mr-title.txt` and the drafted body to `/tmp/mr-body.md` —
-the body starting with the `Closes $TICKET` line when `$TICKET` is non-empty — since the
+Write the drafted title and body to files under the current worktree's git directory, not
+shared `/tmp` — `git rev-parse --git-path` is worktree-aware, so two concurrent worktrees
+never collide on the same path, and the location sits outside the working tree so it never
+shows up in `git status --porcelain`:
+
+```bash
+TITLE_FILE="${MR_TITLE_FILE:-$(git rev-parse --git-path mr-title.txt)}"
+BODY_FILE="${MR_BODY_FILE:-$(git rev-parse --git-path mr-body.md)}"
+```
+
+Write the drafted title to `$TITLE_FILE` and the drafted body to `$BODY_FILE` — the body
+starting with the `Closes $TICKET` line when `$TICKET` is non-empty — since the
 `gh pr create` call below reads both back from those files. Announce the chosen title and
 the drafted body in your response before creating the MR, so the user sees what was decided.
+If the environment mandates a scratchpad directory instead, set `MR_TITLE_FILE` /
+`MR_BODY_FILE` (or assign the variables directly) to a path inside it.
 
 Then, still on the gh path:
 
@@ -286,8 +302,8 @@ REVIEWER_FLAG=""
 [ -n "${AI_SKILLS_REVIEWERS:-}" ] && REVIEWER_FLAG="--reviewer $AI_SKILLS_REVIEWERS"
 
 gh pr create \
-  --title "$(cat /tmp/mr-title.txt)" \
-  --body "$(cat /tmp/mr-body.md)" \
+  --title "$(cat "$TITLE_FILE")" \
+  --body "$(cat "$BODY_FILE")" \
   --base "${AI_SKILLS_TARGET_BRANCH:-main}" \
   --draft \
   --assignee @me \
