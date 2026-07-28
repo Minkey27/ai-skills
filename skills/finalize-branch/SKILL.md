@@ -250,28 +250,8 @@ GitLab-only). Read `write-mr-description`'s `SKILL.md` and follow its `## The bo
 not reproduce their contents here; that file is the single source of the format, and a copy
 in this file will drift from it.
 
-Write the drafted body to `/tmp/mr-body.md` — the `gh pr create` call below reads the body
-from that file. Announce the chosen title and the drafted body in your response before
-creating the MR, so the user sees what was decided.
-
-Then, still on the gh path:
-
-```bash
-git push -u origin "$(git branch --show-current)"
-
-REVIEWER_FLAG=""
-[ -n "${AI_SKILLS_REVIEWERS:-}" ] && REVIEWER_FLAG="--reviewer $AI_SKILLS_REVIEWERS"
-
-gh pr create \
-  --title "$TITLE" \
-  --body "$(cat /tmp/mr-body.md)" \
-  --base "${AI_SKILLS_TARGET_BRANCH:-main}" \
-  --draft \
-  --assignee @me \
-  $REVIEWER_FLAG
-```
-
-Extract the ticket for the `Closes` line the same way `write-mr-description` does:
+Extract the ticket for the `Closes` line the same way `write-mr-description` does — before
+drafting the body, since the ticket (if any) is the body's first line:
 
 ```bash
 BASE_SHA=$(git merge-base "origin/${AI_SKILLS_TARGET_BRANCH:-main}" HEAD)
@@ -291,6 +271,28 @@ and never leave a placeholder.
 **Why the exact form matters:** downstream automation (Zapier → ClickUp) parses this line
 out of the MR description to transition the ticket's status. A reworded, reformatted or
 missing line means the ticket silently never advances.
+
+Write the drafted body to `/tmp/mr-body.md` — starting with the `Closes $TICKET` line when
+`$TICKET` is non-empty — since the `gh pr create` call below reads the body from that file.
+Announce the chosen title and the drafted body in your response before creating the MR, so
+the user sees what was decided.
+
+Then, still on the gh path:
+
+```bash
+git push -u origin "$(git branch --show-current)"
+
+REVIEWER_FLAG=""
+[ -n "${AI_SKILLS_REVIEWERS:-}" ] && REVIEWER_FLAG="--reviewer $AI_SKILLS_REVIEWERS"
+
+gh pr create \
+  --title "$TITLE" \
+  --body "$(cat /tmp/mr-body.md)" \
+  --base "${AI_SKILLS_TARGET_BRANCH:-main}" \
+  --draft \
+  --assignee @me \
+  $REVIEWER_FLAG
+```
 
 Return the MR/PR URL when done.
 
