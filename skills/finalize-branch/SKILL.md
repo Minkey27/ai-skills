@@ -245,12 +245,16 @@ Delegating matters for a reason beyond DRY: that skill runs forked, so it cannot
 session. A body drafted here would narrate the implementation you just did.
 
 **When `${AI_SKILLS_MR_TOOL:-gh}` is `gh`,** `write-mr-description` does not apply (it is
-GitLab-only). Draft the body here following **the structure, budgets and banned list in
-`write-mr-description`'s `SKILL.md`** — read that file rather than reproducing its rules,
-so the two paths cannot drift. In short: `Closes <TICKET>` first line, `## Why` (prose),
-`## What` (≤5 bullets), `## Caveats` (usually omitted), 200 words hard, no test plan.
+GitLab-only). Read `write-mr-description`'s `SKILL.md` and follow its `## The body`,
+`## Budgets`, `## Title` and `## Never` sections to draft the title and body yourself — do
+not reproduce their contents here; that file is the single source of the format, and a copy
+in this file will drift from it.
 
-Then:
+Write the drafted body to `/tmp/mr-body.md` — the `gh pr create` call below reads the body
+from that file. Announce the chosen title and the drafted body in your response before
+creating the MR, so the user sees what was decided.
+
+Then, still on the gh path:
 
 ```bash
 git push -u origin "$(git branch --show-current)"
@@ -270,6 +274,7 @@ gh pr create \
 Extract the ticket for the `Closes` line the same way `write-mr-description` does:
 
 ```bash
+BASE_SHA=$(git merge-base "origin/${AI_SKILLS_TARGET_BRANCH:-main}" HEAD)
 PATTERN="${AI_SKILLS_TICKET_PREFIX:-[A-Z]+}-[0-9]+"
 BRANCH=$(git branch --show-current)
 TICKET=$(printf '%s\n' "$BRANCH" | grep -oE "$PATTERN" | head -1)
