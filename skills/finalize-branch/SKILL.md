@@ -241,14 +241,20 @@ reading the branch scope, extracting and fetching the ticket, drafting the body 
 budgets, and creating or updating the MR with the required flags. Do not draft a body here
 and do not restate its rules — pass control and report the URL it returns.
 
+- If the sub-skill returns a question or an abort instead of a URL (target-branch
+  ambiguity, the word-budget gate, or two or more open MRs), surface that question to the
+  user verbatim and create nothing here — do not fill the gap yourself.
+
 Delegating matters for a reason beyond DRY: that skill runs forked, so it cannot see this
 session. A body drafted here would narrate the implementation you just did.
 
 **When `${AI_SKILLS_MR_TOOL:-gh}` is `gh`,** `write-mr-description` does not apply (it is
-GitLab-only). Read `write-mr-description`'s `SKILL.md` and follow its `## The body`,
-`## Budgets`, `## Title` and `## Never` sections to draft the title and body yourself — do
-not reproduce their contents here; that file is the single source of the format, and a copy
-in this file will drift from it.
+GitLab-only). Read `~/.claude/skills/write-mr-description/SKILL.md` — follow its
+`## The body`, `## Budgets`, `## Title`, `## Never` and `## Example` sections to draft the
+title and body yourself, apply its deletion pass (step 6), and run its word gate (step 7,
+`wc -w` against `## Budgets`' cap) before creating anything — do not reproduce their contents
+here; that file is the single source of the format, and a copy in this file will drift from
+it.
 
 Extract the ticket for the `Closes` line the same way `write-mr-description` does — before
 drafting the body, since the ticket (if any) is the body's first line:
@@ -264,18 +270,12 @@ fi
 echo "Ticket: ${TICKET:-<none>}"
 ```
 
-`Closes <TICKET>` goes on the first line, written exactly in that form — keyword, space,
-ticket ID, nothing else. Omit the line entirely when no ticket was found; never invent one
-and never leave a placeholder.
+`Closes <TICKET>` goes first, exactly as `write-mr-description`'s `## The body` specifies.
 
-**Why the exact form matters:** downstream automation (Zapier → ClickUp) parses this line
-out of the MR description to transition the ticket's status. A reworded, reformatted or
-missing line means the ticket silently never advances.
-
-Write the drafted body to `/tmp/mr-body.md` — starting with the `Closes $TICKET` line when
-`$TICKET` is non-empty — since the `gh pr create` call below reads the body from that file.
-Announce the chosen title and the drafted body in your response before creating the MR, so
-the user sees what was decided.
+Write the drafted title to `/tmp/mr-title.txt` and the drafted body to `/tmp/mr-body.md` —
+the body starting with the `Closes $TICKET` line when `$TICKET` is non-empty — since the
+`gh pr create` call below reads both back from those files. Announce the chosen title and
+the drafted body in your response before creating the MR, so the user sees what was decided.
 
 Then, still on the gh path:
 
@@ -286,7 +286,7 @@ REVIEWER_FLAG=""
 [ -n "${AI_SKILLS_REVIEWERS:-}" ] && REVIEWER_FLAG="--reviewer $AI_SKILLS_REVIEWERS"
 
 gh pr create \
-  --title "$TITLE" \
+  --title "$(cat /tmp/mr-title.txt)" \
   --body "$(cat /tmp/mr-body.md)" \
   --base "${AI_SKILLS_TARGET_BRANCH:-main}" \
   --draft \
@@ -308,12 +308,12 @@ Return the MR/PR URL when done.
 - Skip the verification fan-out — bucket classification is only trustworthy if sub-agents have confirmed each one
 - Apply unverified code-simplifier suggestions in yolo without printing a summary the user can scan
 - Force-push without the squash skill's verification passing
-- Prefix the MR/PR title with `Draft:` or `WIP:` — use the tool's draft flag instead
+- Prefix the MR/PR title with `Draft:` or `WIP:` — banned by `write-mr-description`'s `## Title`
 - Invent or hallucinate a ticket number — only include `Closes <TICKET>` if the reference actually appears in the branch name or commits
-- Leave a literal `<TICKET>` placeholder in the description — strip the line entirely when no ticket is found
+- Leave a literal `<TICKET>` placeholder in the description — banned by `write-mr-description`'s `## The body`
 - Draft the MR body inside this skill when `AI_SKILLS_MR_TOOL=glab` — Step 4 delegates to `write-mr-description`, which runs forked precisely so it cannot narrate this session
 - Restate `write-mr-description`'s format rules in the `gh` path — reference that file instead, or the two copies drift
-- Add a dedicated test-plan/QA-steps section (or any reviewer QA script) to an MR body
+- Add a dedicated test-plan/QA-steps section (or any reviewer QA script) to an MR body — banned by `write-mr-description`'s `## Never`
 
 **Always:**
 - Detect the yolo argument before starting — announce it explicitly so the user can interrupt if they didn't mean it
@@ -328,7 +328,7 @@ Return the MR/PR URL when done.
 - Delegate Step 4 to `write-mr-description` on GitLab; on GitHub, read that skill's SKILL.md for the format before drafting
 - Pass `--draft` and `--assignee @me` on every invocation
 - Only add `--reviewer` when `$AI_SKILLS_REVIEWERS` is non-empty
-- Extract a ticket reference before drafting; if one exists, prepend `Closes <TICKET>` as the first line of the description
+- Extract a ticket reference before drafting; if one exists, prepend it per `write-mr-description`'s `## The body`
 
 ## Integration
 
