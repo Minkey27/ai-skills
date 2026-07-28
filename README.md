@@ -13,8 +13,8 @@ A personal collection of [Claude Code](https://docs.claude.com/en/docs/claude-co
 - **pytest-docker** — run pytest inside the project's docker-compose backend container.
 - **rebase-on-main** — rebase the current feature branch onto `main` with guided conflict resolution.
 - **squash** — reorganize messy or fixup commits into clean logical commits.
-- **write-mr-description** — draft a short GitLab MR description (title + body, budgeted to 200 words) for the current branch and create or update the MR with `glab`; runs forked so it can't narrate the implementation session. `finalize-branch` delegates its Step 4 here on GitLab.
 - **worklog** — reconstruct what you worked on in a time window from Claude Code session transcripts + git history; renders a `Subject | Summary | Wallclock | Active estimate` table to help log hours. Reports only; no config required (`AI_SKILLS_TICKET_PREFIX` optionally improves ticket labeling).
+- **write-mr-description** — draft a short GitLab MR description (title + body, budgeted to 200 words) for the current branch and create or update the MR with `glab`; runs forked so it can't narrate the implementation session. `finalize-branch` delegates its Step 4 here on GitLab.
 
 Each skill is a directory under [`skills/`](./skills) containing a `SKILL.md` (and optional helper scripts).
 
