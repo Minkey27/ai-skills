@@ -121,6 +121,11 @@ A real 653-word description and the same change in 164 words:
 
 ## Steps
 
+Shell variables threaded across the steps below: `$BRANCH`, `$NEEDS_PUSH`, `$TARGET_DEFAULT`,
+`$BEST`, `$BEST_N`, `$TARGET`, `$BASE_SHA`, `$TICKET`, `$TITLE`, `$WORDS`, `$OPEN`, `$COUNT`,
+`$IID`, `$REVIEWER_FLAG` — each is assigned in the step where it first appears and consumed
+in later steps as noted.
+
 ### 1. State check
 
 ```bash
@@ -149,6 +154,14 @@ for REF in $(git branch -r --merged HEAD --format='%(refname:short)' \
 done
 echo "configured default: origin/$TARGET_DEFAULT"
 echo "nearest contained:  $BEST ($BEST_N commits behind HEAD)"
+
+# $TARGET is the branch name WITHOUT the origin/ prefix — it is consumed as origin/$TARGET.
+if [ "$BEST" = "origin/$TARGET_DEFAULT" ] || [ -z "$BEST" ]; then
+  TARGET="$TARGET_DEFAULT"
+else
+  TARGET="${BEST#origin/}"   # only after the user has confirmed which to target
+fi
+echo "target: $TARGET"
 ```
 
 "Nearest" is the candidate with the **fewest** commits in `<candidate>..HEAD` — on a stacked
@@ -197,7 +210,12 @@ Closes BPZ-0000
 
 ...
 EOF
+
+TITLE="Filter the project overview by assigned colleague"   # <= 72 chars, per ## Title
 ```
+
+Draft `$TITLE` alongside the body, following the `## Title` section's rules, and check it
+against the 72-char budget there.
 
 Check for `.gitlab/merge_request_templates/`. If a template exists, note it in your final
 report but do not follow it — this format wins.
@@ -228,7 +246,9 @@ Over budget means cut. It does not mean create it anyway and mention the overrun
 
 OPEN=$(glab api "projects/:id/merge_requests?source_branch=$BRANCH&state=opened" \
   | python3 -c "import json,sys; print(' '.join(str(m['iid']) for m in json.load(sys.stdin)))")
-echo "open MRs on $BRANCH: ${OPEN:-none}"
+COUNT=$(printf '%s\n' $OPEN | grep -c . || true)
+IID=$(printf '%s\n' $OPEN | head -1)
+echo "open MRs on $BRANCH: ${COUNT:-0} (${OPEN:-none})"
 ```
 
 Several MRs can share one source branch, and `glab mr view` errors when it is ambiguous.
