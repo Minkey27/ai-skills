@@ -245,13 +245,21 @@ Aggregate the results into a single table keyed by finding id.
 **7a. Pre-prompt presentation.** Print — in this order:
 
 1. **The discrepancy report from step 4** in plain text. Not selectable; it's context the user needs to decide what to post.
-2. **A short summary of each finding** — one block per finding. This is the *detail layer*; the checkbox options later stay minimal because the detail already lives here. Each block carries three labelled lines so the user reads the issue and the fix together:
+2. **A prose write-up of each finding** — one block per finding, in the shape below. This is the *detail layer*; the checkbox options later stay minimal because the detail already lives here. See [Finding write-up format](#finding-write-up-format) for the full rules — it is prose with run-on bold lead-ins, **not** colon-labelled one-liners, and it carries **no verification badge line**.
 
-   ```
+   ```markdown
    ### F1 — [medium] service.py:62 — every dropdown click rewrites user_roles
-   **Issue:** <2–4 sentences: what's wrong and why it matters>
-   **Suggested fix:** <the recommendation, made concrete — the actual change to post>
-   **Verification:** ✓ issue real, fix sound   (or ⚠ risky: <caveat> / ⚠ corrected diagnosis: <…>)
+
+   **Problem.** <mechanism, 2–5 sentences. Name the exact symbols and cite file:line
+   inline as you go. Explain the sequence that produces the bad state and what the
+   user-visible consequence is.>
+
+   **Fix.** <the concrete change. One bullet per edit if there is more than one;
+   inline the actual code line where it clarifies.>
+
+   **My read.** <one sentence: take it / skip it / fold into F<n>, and why.>
+
+   ---
    ```
 3. **An overview table at the end** — the *scan layer* the user reads right before ticking:
 
@@ -351,6 +359,41 @@ Posted N diff notes + M general notes to MR !<iid>. (<mr_web_url>)
 For dry-runs, replace "Posted" with "[DRY-RUN] Would post" and the URL column with `(dry-run — not sent)`.
 
 Also restate any **Excluded** findings from step 7 with one-line "why excluded" reasons so the user knows what didn't get posted and why. This closes the loop: every finding the reviewer produced ends up either Posted, Optional-but-not-picked, or Excluded-with-reason. Nothing is silently dropped.
+
+## Finding write-up format
+
+This is the shape of the per-finding blocks in step 7a — what the user reads on screen. It is **not** the diff-note body (that's the next section, and it stays short).
+
+```markdown
+### F4 — [medium] floorplan-editor.js:1543 — applyAdjustFrame derefs state that can be nulled mid-POST
+
+**Problem.** `applyAdjustFrame` awaits the POST at line 1508. `adjustMode` stays `true`
+for that whole await, so anything that calls `cancelAdjust()` during it — Escape (2901),
+`setDrawMode('pan')` (531), the page-change branch (1256) — runs `_exitAdjust()` and nulls
+`adjustHandles`. Phase 2 then hits 1543 `adjustHandles.a.slice()` and throws. Pre-branch that
+deref sat inside `if (frame)`; this branch hoisted it out. The throw lands *after* the server
+persisted, so `loadDoors()` never runs — canvas shows pre-alignment geometry for saved data.
+
+**Fix.** Two edits in `floorplan-editor.js`:
+- Snapshot both objects into locals before the Phase-1 await and use the snapshots in Phase 2:
+  `const sentA = adjustHandles.a.slice(), sentB = adjustHandles.b.slice();`
+- Reset `applyBtn.disabled = false` where the adjust toolbar is re-shown, so a session
+  cancelled mid-flight doesn't leave the button dead.
+
+**My read.** Take it — small, and it's a regression this branch introduced.
+
+---
+```
+
+**Rules:**
+
+- **`**Problem.**` / `**Fix.**` are run-on bold lead-ins**, terminated with a period, with the prose continuing on the same line. Not `**Issue:** <one line>`. The write-up is prose that explains a *mechanism*: the trigger, the sequence, the resulting state, the user-visible consequence. Cite `file:line` inline as you narrate rather than only in the header.
+- **`**Fix.**` must be actionable, not a restatement of the problem.** Bullet per edit when there is more than one; inline the real code line, the real helper name, the real fixture that already exists. Say when it's a pure test addition with no production change.
+- **No `**Verification:**` badge line.** Verification results get *woven into* the prose instead, as corrections in the reviewer's own voice — "Important correction to the original recommendation: `target_document_version_id` is the row's string id, while `get_page_sizes` needs the int `version` field", "Verification downgraded this to partial: nothing is locked at that point, so it's transaction duration, not lock contention", "That last part is deliberate, not laziness — `page_geometry.py:38-42` documents that PyMuPDF failures aren't a well-defined exception set". Badges live **only** in the overview table.
+- **`**My read.**` is one sentence** — take it / skip it / fold into F*n* — and only when the call isn't obvious from the block.
+- **`---` between every finding.** Including two consecutive findings inside the same cluster. The separator is what makes a long list navigable.
+- **Clustering is encouraged** when findings share one mechanism: give the cluster a `## Cluster A — <the mechanism>` heading and a one-line note on how the findings interact (e.g. "F1's write-back closes F6; F2's narrowing is what makes it legible"). Each finding inside still gets its own full block and its own `---` — a cluster heading is not a licence to merge findings into one paragraph.
+- **The overview table always stays**, last, covering every finding including clustered ones.
 
 ## Body formatting for diff notes
 

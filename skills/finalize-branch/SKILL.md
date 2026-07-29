@@ -159,13 +159,21 @@ Aggregate the results into a table keyed by finding id.
 
 **1c. Present the findings — then END YOUR TURN.** Before any `AskUserQuestion`, the user must be able to read what each finding *is*, what the *suggested fix* is, and what verification concluded. Print, in this order:
 
-1. **A short summary of each finding** — one block per finding. This is the *detail layer*; the checkbox options later stay minimal because the detail already lives here.
+1. **A prose write-up of each finding** — one block per finding. This is the *detail layer*; the checkbox options later stay minimal because the detail already lives here. Full rules in [Finding write-up format](#finding-write-up-format) — prose with run-on bold lead-ins, **not** colon-labelled one-liners, and **no verification badge line**.
 
-   ```
+   ```markdown
    ### F1 — [medium] services.py:120 — duplicate enum 'Afdeling'
-   **Issue:** <2–4 sentences: what's wrong and why it matters>
-   **Suggested fix:** <the recommendation, made concrete — the actual change to apply>
-   **Verification:** ✓ issue real, fix sound   (or ⚠ lines shifted to 125–128 / ⚠ fix risky: <one-line caveat> / ⚠ partial — corrected diagnosis: <…>)
+
+   **Problem.** <mechanism, 2–5 sentences. Name the exact symbols and cite file:line
+   inline as you go. Explain the sequence that produces the bad state and the
+   user-visible consequence.>
+
+   **Fix.** <the concrete change. One bullet per edit if there is more than one;
+   inline the actual code line where it clarifies.>
+
+   **My read.** <one sentence: take it / skip it / fold into F<n>, and why.>
+
+   ---
    ```
 
 2. **An overview table at the end** — the *scan layer* the user reads right before deciding:
@@ -335,7 +343,7 @@ Return the MR/PR URL when done.
 - Detect the yolo argument before starting — announce it explicitly so the user can interrupt if they didn't mean it
 - Compute BASE_SHA as merge-base, never use the remote target branch directly
 - Dispatch finding-verification sub-agents in parallel (single message, many tool calls)
-- Present per-finding summaries (Issue / Suggested fix / Verification) + an overview table in a turn that **ends**, before any curation prompt
+- Present per-finding prose write-ups (Problem. / Fix. / My read., `---` separated) + an overview table in a turn that **ends**, before any curation prompt — see [Finding write-up format](#finding-write-up-format)
 - Classify findings into Recommended (`issue_real ∈ {yes, partial}` AND `fix_sound != no` AND severity ∈ {critical, high, medium}) vs Optional (everything else shown); `fix_sound == risky` goes to Optional regardless of severity; run them as two sequential prompts
 - Drop verified false positives (`issue_real == no`) from the prompts and list them briefly in the 1c presentation
 - Commit fixes from each step before proceeding to the next
@@ -345,6 +353,41 @@ Return the MR/PR URL when done.
 - Pass `--draft` and `--assignee @me` on every invocation
 - Only add `--reviewer` when `$AI_SKILLS_REVIEWERS` is non-empty
 - Extract a ticket reference before drafting; if one exists, prepend it per `write-mr-description`'s `## The body`
+
+## Finding write-up format
+
+The shape of the per-finding blocks in Step 1c — what the user reads on screen when curating.
+
+```markdown
+### F4 — [medium] floorplan-editor.js:1543 — applyAdjustFrame derefs state that can be nulled mid-POST
+
+**Problem.** `applyAdjustFrame` awaits the POST at line 1508. `adjustMode` stays `true`
+for that whole await, so anything that calls `cancelAdjust()` during it — Escape (2901),
+`setDrawMode('pan')` (531), the page-change branch (1256) — runs `_exitAdjust()` and nulls
+`adjustHandles`. Phase 2 then hits 1543 `adjustHandles.a.slice()` and throws. Pre-branch that
+deref sat inside `if (frame)`; this branch hoisted it out. The throw lands *after* the server
+persisted, so `loadDoors()` never runs — canvas shows pre-alignment geometry for saved data.
+
+**Fix.** Two edits in `floorplan-editor.js`:
+- Snapshot both objects into locals before the Phase-1 await and use the snapshots in Phase 2:
+  `const sentA = adjustHandles.a.slice(), sentB = adjustHandles.b.slice();`
+- Reset `applyBtn.disabled = false` where the adjust toolbar is re-shown, so a session
+  cancelled mid-flight doesn't leave the button dead.
+
+**My read.** Take it — small, and it's a regression this branch introduced.
+
+---
+```
+
+**Rules:**
+
+- **`**Problem.**` / `**Fix.**` are run-on bold lead-ins**, terminated with a period, with the prose continuing on the same line. Not `**Issue:** <one line>`. The write-up is prose that explains a *mechanism*: the trigger, the sequence, the resulting state, the user-visible consequence. Cite `file:line` inline as you narrate rather than only in the header.
+- **`**Fix.**` must be actionable, not a restatement of the problem.** Bullet per edit when there is more than one; inline the real code line, the real helper name, the real fixture that already exists. Say when it's a pure test addition with no production change.
+- **No `**Verification:**` badge line.** Verification results get *woven into* the prose instead, as corrections in your own voice — "Important correction to the original recommendation: `target_document_version_id` is the row's string id, while `get_page_sizes` needs the int `version` field", "Verification downgraded this to partial: nothing is locked at that point, so it's transaction duration, not lock contention". Badges live **only** in the overview table.
+- **`**My read.**` is one sentence** — take it / skip it / fold into F*n* — and only when the call isn't obvious from the block.
+- **`---` between every finding.** Including two consecutive findings inside the same cluster. The separator is what makes a long list navigable.
+- **Clustering is encouraged** when findings share one mechanism: give the cluster a `## Cluster A — <the mechanism>` heading and a one-line note on how the findings interact (e.g. "F1's write-back closes F6; F2's narrowing is what makes it legible"). Each finding inside still gets its own full block and its own `---` — a cluster heading is not a licence to merge findings into one paragraph.
+- **The overview table always stays**, last, covering every finding including clustered ones.
 
 ## Integration
 
