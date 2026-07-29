@@ -184,6 +184,16 @@ Run the project's test suite to confirm nothing broke. Use whatever test runner 
 
 **Verifying results:** With parallel test runners or `-q` mode, the summary line (`X passed`) may not appear. The reliable signal is **absence of `FAILED` or `ERROR`** in the output — grep for those rather than looking for a pass count.
 
+**Exception — skip rerun only when ALL of these hold:**
+
+1. **Simple case was used** (`git reset --soft` + single commit — Step 3's "simple case" path). Multi-group interactive rebase always reruns tests, no exception — reordering/fixup can replay commits into intermediate states that never existed together, so a clean Step 4 diff doesn't rule out an ordering-dependent break introduced mid-rebase.
+2. **Step 4's diff check passed clean** (no output). This proves the working tree is byte-identical to the pre-squash tip — `reset --soft` doesn't touch the tree, only history, so this is guaranteed by construction for the simple case, not just likely.
+3. **Tests are known green on the pre-squash tip in this session** — either you ran them yourself earlier in this session, or the user explicitly confirms they're currently passing. An assumption ("probably fine") does not count; a stale CI badge does not count. If there's no positive evidence, run the tests.
+
+If all three hold: skip Step 5, and say so explicitly in Step 6's report (e.g. "Tests: skipped — simple squash, clean diff-check, tests confirmed green pre-squash"). Never skip silently — the report must show the reasoning was applied, not just omit the line.
+
+Rationale: a `reset --soft` squash changes history shape only, never tree content. If the tree is provably identical (point 2) and was already proven to pass (point 3), rerunning is testing the same tree twice — the cost is wall-clock time, not risk reduction.
+
 ## Step 6: Report
 
 Summarize:
@@ -223,7 +233,7 @@ GIT_EDITOR=/tmp/squash-msg-editor.sh git rebase --continue
 | Forgetting to snapshot diff before squash | Always do Step 1 first — it's your undo safety net |
 | Squashing without asking user | Always present grouping proposal and wait for confirmation |
 | Losing changes during reorder | The before/after diff check catches this — never skip it |
-| Not running tests after | A squash can silently break things if commits had ordering dependencies |
+| Not running tests after | A squash can silently break things if commits had ordering dependencies — unless the Step 5 exception applies (simple case + clean diff-check + tests already known green) |
 | Force-pushing without telling user | After squash, remind user the branch needs force-push and confirm before doing it |
 | Assuming base is always `main` | Branch may be stacked on another feature branch — always run Step 0 to detect the real base |
 | Diffing against branch tip instead of merge-base | The base branch tip can move — always diff against `$MERGE_BASE` for stable comparison |
