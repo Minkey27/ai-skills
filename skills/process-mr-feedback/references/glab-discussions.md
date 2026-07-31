@@ -24,8 +24,19 @@ either in the `projects/:id/...` position.
 ## Fetch the threads that need processing
 
 ```bash
-glab api "projects/:id/merge_requests/:iid/discussions?per_page=100" --paginate
+glab api "projects/$PID/merge_requests/$IID/discussions?per_page=100" --paginate
 ```
+
+> **`:iid` is not a glab placeholder.** `glab api` substitutes only repo-scoped placeholders —
+> `:branch`, `:fullpath`, `:group`, `:id`, `:namespace`, `:repo`, `:user`, `:username`. An MR iid has
+> no repo to resolve from, so `:iid` is sent to the server literally and GitLab answers
+> `HTTP 400 {"error":"noteable_id is invalid"}`. **Always interpolate the real iid** (and, for
+> clarity, the real project id) into the path. Capture both first:
+>
+> ```bash
+> PID=$(glab mr view --output json | python3 -c 'import json,sys; print(json.load(sys.stdin)["project_id"])')
+> IID=$(glab mr view --output json | python3 -c 'import json,sys; print(json.load(sys.stdin)["iid"])')
+> ```
 
 Keep only threads that are **open and resolvable**, and drop system notes:
 
@@ -39,36 +50,48 @@ Per kept thread, capture:
 |---|---|---|
 | `discussion_id` | `.id` | reply + resolve target |
 | `author` | `.notes[0].author.username` | **metadata only** (human vs bot) |
-| `path` | `.notes[0].position.new_path` | code anchor |
-| `line` | `.notes[0].position.new_line` | code anchor |
+| `path` | `.notes[0].position.new_path // .notes[0].position.old_path` | code anchor |
+| `line` | `.notes[0].position.new_line // .notes[0].position.old_line` | code anchor |
 | `body` | `.notes[0].body` | the reviewer's comment |
 | `has_prior_replies` | `(.notes | length) > 1` | flag "has prior discussion" |
+
+Two fields are **not** from the API and get filled in by the skill: `tier` (the verification model,
+assigned in Stage 2a) and `cluster` (threads sharing an anchor or a fix, grouped in Stage 1c).
 
 Example — list unresolved resolvable threads with anchor + body:
 
 ```bash
-glab api "projects/:id/merge_requests/:iid/discussions?per_page=100" --paginate \
+glab api "projects/$PID/merge_requests/$IID/discussions?per_page=100" --paginate \
   | jq -r '.[]
            | select(.notes[0].system != true)
            | select(.notes[0].resolvable == true)
            | select([.notes[] | select(.resolved == false)] | length > 0)
            | {id,
               author: .notes[0].author.username,
-              path:   .notes[0].position.new_path,
-              line:   .notes[0].position.new_line,
+              path:   (.notes[0].position.new_path // .notes[0].position.old_path),
+              line:   (.notes[0].position.new_line // .notes[0].position.old_line),
               body:   .notes[0].body,
               replies:(.notes | length)}'
 ```
 
-> Note: `--paginate` merges pages into one JSON stream; `jq '.[]'` iterates it. Some threads
-> (general MR comments, not anchored to a line) have a null `.position` — `path`/`line` come back
-> null. Those are still valid threads to reply to/resolve; they just have no code anchor.
+> Note: `--paginate` merges pages into one JSON stream; `jq '.[]'` iterates it.
+>
+> **Anchors come in three shapes**, and only the third is genuinely anchorless:
+>
+> | Shape | `position` | Meaning |
+> |---|---|---|
+> | `new_line` set | present | normal note on a current line |
+> | `new_line` null, `old_line` set | present | note on a line the diff **deleted** — `old_path`/`old_line` still locate it |
+> | whole `.position` null | absent | a general MR comment, no code anchor at all |
+>
+> The `//` fallbacks above keep the deleted-line case anchored to a file instead of degrading it to
+> "no anchor". Anchorless threads are still valid to reply to and resolve.
 
 ## Reply to a thread (add a note to an existing discussion)
 
 ```bash
 printf '%s' '{"body": "Fixed in <sha>: <one line>"}' \
-  | glab api "projects/:id/merge_requests/:iid/discussions/<discussion_id>/notes" \
+  | glab api "projects/$PID/merge_requests/$IID/discussions/<discussion_id>/notes" \
     --method POST \
     --header "Content-Type: application/json" \
     --input -
@@ -77,7 +100,7 @@ printf '%s' '{"body": "Fixed in <sha>: <one line>"}' \
 ## Resolve a thread
 
 ```bash
-glab api "projects/:id/merge_requests/:iid/discussions/<discussion_id>?resolved=true" \
+glab api "projects/$PID/merge_requests/$IID/discussions/<discussion_id>?resolved=true" \
   --method PUT
 ```
 
