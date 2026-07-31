@@ -157,9 +157,9 @@ Be specific. Do not parrot the finding back — actually look at the code. Under
 
 Aggregate the results into a table keyed by finding id.
 
-**1c. Present the findings — then END YOUR TURN.** Before any `AskUserQuestion`, the user must be able to read what each finding *is*, what the *suggested fix* is, and what verification concluded. Print, in this order:
+**1c. Present the findings — then END YOUR TURN.** Before any curation prompt, the user must be able to read what each finding *is*, what the *suggested fix* is, and what verification concluded. Print, in this order:
 
-1. **A prose write-up of each finding** — one block per finding. This is the *detail layer*; the checkbox options later stay minimal because the detail already lives here. Full rules in [Finding write-up format](#finding-write-up-format) — prose with run-on bold lead-ins, **not** colon-labelled one-liners, and **no verification badge line**.
+1. **A prose write-up of each finding** — one block per finding. This is the *detail layer*; the numbered options in 1d stay minimal because the detail already lives here. Full rules in [Finding write-up format](#finding-write-up-format) — prose with run-on bold lead-ins, **not** colon-labelled one-liners, and **no verification badge line**.
 
    ```markdown
    ### F1 — [medium] services.py:120 — duplicate enum 'Afdeling'
@@ -185,11 +185,11 @@ Aggregate the results into a table keyed by finding id.
    | F2 | low | (file-level) | ✓ yes | ⚠ risky | Optional |
    ```
 
-**Then END YOUR TURN.** The presentation must be a complete assistant message with **no `AskUserQuestion` in the same turn** — the dialog seizes screen focus the moment it fires, so a same-turn prompt buries the analysis and the user picks findings they never read. Putting the report "before" the prompt *within one turn* does **not** satisfy this. Wait for the user's reply (a "go", a question about a finding, or a re-classification) and only then send the curation prompts in 1d.
+**Then END YOUR TURN.** The presentation must be a complete assistant message that **asks nothing** — a same-turn prompt means the user picks findings they never read. Putting the report "before" the prompt *within one turn* does **not** satisfy this. Wait for the user's reply (a "go", a question about a finding, or a re-classification) and only then send the curation prompts in 1d.
 
 **Excluded findings** (`issue_real == no` — verified false positives) are **not** shown as options. List them in a brief "dropped, and why" line inside the presentation so the user knows they were considered.
 
-**1d. Curation prompts** (in the turn *after* the user replies to 1c). Classify each shown finding into one bucket, then run **sequential** `AskUserQuestion` calls with `multiSelect: true` — never one combined dialog:
+**1d. Curation prompts** (in the turn *after* the user replies to 1c). Classify each shown finding into one bucket, then send **sequential plain-text prompts with numbered options** — **never `AskUserQuestion`**, never one combined list:
 
 | Bucket | Rule | Prompt |
 |---|---|---|
@@ -200,12 +200,20 @@ Aggregate the results into a table keyed by finding id.
 
 > **Why `partial` counts as real.** A `partial` verdict usually means the *bug* is real but the reviewer's diagnosis of *how* it triggers was wrong. Fix the corrected version from the verification report, not the original claim.
 
-- **Prompt 1** — only the Recommended bucket. Question text makes clear every option is skill-recommended; user unticks to drop. **Wait for the answer before Prompt 2.**
-- **Prompt 2** — only the Optional bucket. Empty selection is the expected default; user ticks to opt in. Skip this prompt if the bucket is empty.
+- **Prompt 1** — only the Recommended bucket, one numbered line each. Say plainly that every line is skill-recommended and that the default is **all of them**; the user replies with numbers to drop (or "go" / "none"). **Wait for the answer before Prompt 2.**
+- **Prompt 2** — only the Optional bucket. Nothing here is recommended, so the default is the opposite: **none are fixed unless the user names numbers.** Skip this prompt if the bucket is empty.
 
-**Keep option labels minimal** — the detail already appeared in 1c. Label: `[F3 medium] services.py:120 — duplicate enum 'Afdeling'` (ID + severity + anchor + headline). The `description` field carries **only** the verification badge (`✓ verified, fix sound`, `⚠ lines shifted to 125–128`) — no summary sentences.
+**Keep each line minimal** — the detail already appeared in 1c. Line shape: `[F3 medium] services.py:120 — duplicate enum 'Afdeling'` (ID + severity + anchor + headline), plus the verification badge in parentheses where one applies (`✓ verified, fix sound`, `⚠ lines shifted to 125–128`). No summary sentences.
 
-If a bucket exceeds 4 options, batch within the bucket across consecutive prompts (4 per call), grouped by severity so heavy hitters come first. Never mix buckets in one prompt; finish all Recommended prompts before the first Optional one.
+```markdown
+**Recommended — 3 findings.** Default is all of them. Reply with numbers to drop, or "go".
+
+1. [F1 high] downloads.py:64 — IDOR on document download  (✓ verified)
+2. [F3 medium] services.py:120 — duplicate 'Afdeling' enum  (⚠ lines shifted to 125–128)
+3. [F5 medium] handlers.py:2455 — as_of not threaded  (✓ verified)
+```
+
+Numbered text has no 4-option ceiling, so a long bucket stays **one** prompt — don't fragment it. Order by severity inside each prompt so heavy hitters come first. Never mix buckets; finish Prompt 1 before Prompt 2. **Silence is not an answer** — if no reply comes, stop rather than applying the default.
 
 **1e. Fix the selected findings, commit.** Skip any the user did not select. Commit with a message that names what was fixed (e.g. `fix: close idor on document download, dedupe afdeling enum`) — never session-local finding ids (`F1`, `F3`), which mean nothing in git history.
 
@@ -324,9 +332,11 @@ Return the MR/PR URL when done.
 
 **Never:**
 - Skip the Step 1 curation prompts — even in yolo mode, the user selects which findings to fix. Yolo only skips gates *between* steps, not within Step 1.
-- Fire an `AskUserQuestion` in the **same turn** as the 1c presentation — the report must end its own turn and the user must reply before the first curation prompt. Same-turn text-then-dialog buries the analysis under the dialog.
-- Cram finding detail (issue text, suggested fix) into `AskUserQuestion` option `description` fields — descriptions truncate and the detail belongs in the 1c summaries. Options stay minimal (ID + severity + anchor + headline + verification badge).
-- Combine Recommended and Optional into one dialog — they are sequential prompts (Recommended first, wait, then Optional).
+- Use `AskUserQuestion` for anything — curation and the between-step gates are plain text with numbered options. The tool runs a countdown and assumes a default when it expires; "which findings do I fix" and "may I force-push" must not be answerable by a timer.
+- Ask in the **same turn** as the 1c presentation — the report must end its own turn and the user must reply before the first curation prompt.
+- Repeat finding detail (issue text, suggested fix) in the prompt lines — the detail belongs in the 1c write-ups, which stay on screen. Lines stay minimal (ID + severity + anchor + headline + verification badge).
+- Combine Recommended and Optional into one list — they are sequential prompts (Recommended first, wait, then Optional) with opposite defaults.
+- Treat silence as an answer — no reply means stop, not "apply the default".
 - Skip a gate between Steps 1–3 **in gated mode** — every one needs user confirmation in default mode
 - Treat anything other than the documented yolo aliases (`yolo`, `--yolo`, `auto`, `-y`) as yolo — ask the user instead of guessing
 - Skip the verification fan-out — bucket classification is only trustworthy if sub-agents have confirmed each one
