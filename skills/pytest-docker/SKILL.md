@@ -36,6 +36,32 @@ This skill applies to subagents too. If you are a subagent that has been dispatc
 - **Never run a raw `docker compose exec <service> pytest …` command without invoking this skill first.** A `PreToolUse` hook can be configured to block any Bash command containing `pytest` until the skill has been loaded; the same expectation applies to subagents even if a particular session lets the command through.
 - **Report back concisely.** Surface the `exit: <N>` line and (on non-zero) the failing test names from `.test-output.txt`. The dispatcher will not see your output file — summarise it for them.
 
+### If you are an implementation subagent: Tier 1 only
+
+**You do not run the full suite. Ever.** Tier 2 belongs to the controller that
+dispatched you — it runs the suite at its own checkpoints, once, across all of
+your work plus everyone else's. Your job is the targeted run for the code you
+touched.
+
+This rule exists because it was broken repeatedly and expensively. Observed in
+real dispatches: implementers reporting "full unit suite (2292 tests) and full
+integration suite" *during* a single task. A full suite takes minutes; an
+implementer's whole useful lifetime is minutes. Two full-suite runs can consume
+most of it and tell the controller nothing it wasn't going to learn at its own
+checkpoint.
+
+What to run instead:
+
+- The test files you added or changed
+- The Tier 1 directory covering the modules you touched
+- One targeted regression selection if your change is cross-cutting — a `-k`
+  expression naming the affected area, never the whole tree
+
+If you genuinely believe the blast radius needs a full suite, **say so in your
+report and let the controller run it.** Do not run it yourself. "I wanted to be
+thorough" is the exact reasoning this rule overrides — thoroughness at the wrong
+tier is just latency the controller pays for twice.
+
 ## Pre-Test Validation
 
 **IMPORTANT**: Before running tests after making changes, always check the server logs first to verify the server started without errors:
@@ -96,6 +122,63 @@ On the happy path this keeps `.test-output.txt` at zero context cost — nothing
 
 ## Failure Handling
 
+### Classifying Failures — do this before debugging anything
+
+**Do not assume the base branch is green.** A suite that has been green for a
+year can still be carrying failures today, and on a large suite it usually is.
+Debugging a pre-existing failure as if you caused it is one of the most
+expensive ways to waste a task: you read a traceback through unrelated code,
+you look for your change in it, and you find nothing because there is nothing
+to find.
+
+So before you debug a failure, classify it. Two buckets: **pre-existing** (fails
+on the base too — not yours, not your task) and **new** (your change caused it).
+
+Classify cheaply, in this order — stop as soon as one answers:
+
+1. **Does the project record a known-failure baseline?** Check the testing docs
+   or the project's `CLAUDE.md`/`AGENTS.md` for a recorded list of accepted
+   failures. If a failure is on that list, it is pre-existing. Done.
+2. **Does the traceback touch your change at all?** If the failing test and its
+   whole traceback live in code you did not touch, and the failure mode has no
+   plausible link to what you changed, treat it as *probably* pre-existing and
+   confirm with step 3 rather than debugging it.
+3. **Run just that test against the base.** One targeted run on a clean base
+   checkout settles it definitively:
+   ```bash
+   git stash                                                   # or use a scratch worktree
+   docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/path/to/test.py::test_name -x -n 0 --tb=short > .test-output.txt 2>&1; echo "exit: $?"
+   git stash pop
+   ```
+   Non-zero on the base → pre-existing. Zero on the base but failing on your
+   branch → yours; now debug it.
+
+Then act on the classification:
+
+- **Yours:** fix it. Normal Tier 1 / Tier 2 failure handling below.
+- **Pre-existing:** do not fix it, and do not fold it into your task. Report it
+  separately — say how many pre-existing failures you saw, name them, and state
+  that you confirmed them against the base. A reader who cannot tell your
+  regressions from the background noise cannot use your report.
+
+Never report a bare count of failures without this split. "17 failing" is
+unusable; "0 new, 17 pre-existing (confirmed on base)" is a green result and
+reads as one.
+
+**What "green" means when the base is red.** The exit-code-first rule in Output
+Handling still holds for Tier 1: a targeted run over code you touched should
+reach `exit: 0`, and if it does you are done. But a Tier 2 full suite on a red
+base **can never exit 0**, no matter how correct your change is. Do not chase
+that zero — it is not reachable, and every extra run costs minutes to rediscover
+the same list. For Tier 2 the passing condition is *no new failures*, not
+`exit: 0`. Read the failure list, confirm every entry is pre-existing, and treat
+that as green.
+
+If you find yourself re-deriving the same pre-existing list on every task in a
+plan, say so to whoever dispatched you — that list belongs in the project's
+testing docs as a recorded baseline, so the next task starts from it instead of
+rediscovering it.
+
 ### Tier 1 failures (`-x` stopped on the first failure)
 
 1. Exit is non-zero → `Grep` `.test-output.txt` for the failing test name, then `Read` for its traceback
@@ -109,10 +192,11 @@ On the happy path this keeps `.test-output.txt` at zero context cost — nothing
 ### Tier 2 failures (full suite collected multiple failures)
 
 1. Exit is non-zero → `Grep` `.test-output.txt` for all failing test names, then `Read` the file in full for tracebacks
-2. **Report every failure to the user before fixing** — the full-suite run is the only place you see the complete picture; don't start patching blindly
-3. Fix the failures
-4. Re-run each failing test individually with Tier 1 flags + `-vs` to confirm each fix in isolation
-5. Re-run the full suite — repeat until `exit: 0`
+2. **Classify each one first** (see Classifying Failures) — the full suite is where pre-existing failures show up in bulk, and they are the ones most likely to be mistaken for yours
+3. **Report every failure to the user before fixing, split into new vs pre-existing** — the full-suite run is the only place you see the complete picture; don't start patching blindly
+4. Fix the failures **you caused**; leave the pre-existing ones alone
+5. Re-run each fixed test individually with Tier 1 flags + `-vs` to confirm each fix in isolation
+6. Re-run the full suite — repeat until the only failures left are the pre-existing ones you classified in step 2
 
 ## Hard Rules
 
@@ -122,11 +206,16 @@ On the happy path this keeps `.test-output.txt` at zero context cost — nothing
 - Never run the full suite during implementation — only at checkpoints and final verification (Tier 2)
 - Never use `-v` or `-s` as default flags — they are debugging flags, reserved for re-running a specific failing test
 - If a test fails, read the traceback — do not re-run with different flags to "investigate" (except to add `-vs` on a single failing test)
-- Assume main is always green — any failing test was most likely introduced by our changes
+- **Never run the full suite as an implementation subagent** — see Subagent Usage. Tier 2 is the controller's job.
+- **Do not assume the base branch is green** — classify every failure as pre-existing or yours before debugging it (see Classifying Failures)
 
 ## Anti-Patterns
 
 - **Verification spiral after `exit: 0`** — piling on `tail`, `grep -E "passed|failed"`, `wc -l`, `grep -E "^="`, or `Read .test-output.txt` to "really confirm" the tests passed. The exit code already confirmed it. Stop at the first green signal.
+- **Debugging a pre-existing failure as if you caused it** — reading a traceback through untouched code looking for your change. Classify first; one targeted run on the base is cheaper than any amount of staring.
+- **Chasing `exit: 0` on a full suite whose base is red** — it will never arrive. The Tier 2 bar is "no new failures".
+- **Reporting a bare failure count** — "17 failing" tells the reader nothing about whether your work is sound. Always split new vs pre-existing.
+- **Running the full suite as an implementer "to be thorough"** — thoroughness at the wrong tier is latency the controller pays for twice. Tier 2 is the controller's, and it is running it anyway.
 - **`Bash(grep ...)` against `.test-output.txt`** — prefer the `Grep` tool. Bash greps on this file are a double violation: they're a worse search tool *and* run when the exit code already answered the question.
 - `pytest tests/ -x -q 2>&1 | tail -30` — truncates output, causes re-run spirals
 - `pytest ... -xvs > .test-output.txt` as the default — `-v -s` inflate output 10–100× for passing runs; they belong in the failure re-run step, not the default loop
