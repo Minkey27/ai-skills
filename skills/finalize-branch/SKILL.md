@@ -74,7 +74,7 @@ digraph finalize {
     node [shape=box];
 
     preflight [label="Pre-flight checks"];
-    review [label="Step 1: parallel-code-review"];
+    review [label="Step 1: superpowers:requesting-code-review"];
     verify [label="Fan out sub-agents\nto verify each finding"];
     present [label="Present summaries + table\nEND TURN, wait for reply"];
     curate [label="Sequential curation prompts\n(Recommended, then Optional)" shape=diamond];
@@ -99,7 +99,7 @@ digraph finalize {
 
 This step is identical in both gated and yolo modes — the curation prompts *are* the gate.
 
-**REQUIRED SUB-SKILL:** Use `parallel-code-review` to generate findings — it fans out dimension-specialist reviewers (count tiered by diff size) and returns the deduped findings list this step consumes. (Falls back to `superpowers:requesting-code-review` only if `parallel-code-review` is unavailable.)
+**REQUIRED SUB-SKILL:** Use `superpowers:requesting-code-review` to generate findings — it dispatches one reviewer sub-agent over the git range and returns a prose review (Strengths / Critical / Important / Minor / Assessment) that step 1a converts into the structured findings list.
 
 Compute SHAs using the merge-base against the target branch (never the remote branch directly):
 
@@ -109,9 +109,20 @@ BASE_SHA=$(git merge-base "origin/${AI_SKILLS_TARGET_BRANCH:-main}" HEAD)
 HEAD_SHA=$(git rev-parse HEAD)
 ```
 
-Invoke `parallel-code-review` with these SHAs.
+Invoke `superpowers:requesting-code-review` with these SHAs, filling its reviewer
+template: `DESCRIPTION` = what this branch built (derive it from `git log` over the
+range), `PLAN_OR_REQUIREMENTS` = the plan file or ticket if one exists, otherwise
+say so explicitly rather than inventing requirements.
 
-**1a. Structure the findings.** Capture each finding as:
+**1a. Structure the findings.** The reviewer returns prose, not a schema — convert
+its `Issues` sections into the list below. Map its severity headings onto this
+skill's scale: `Critical` → `critical` (or `high` when it is a bug without data
+loss / security impact), `Important` → `medium` (or `high` when it breaks a
+user-visible path), `Minor` → `low`, and pure style remarks → `nit`. Ignore
+`Strengths`, `Recommendations`, and `Assessment` — this step consumes findings
+only; the assessment verdict is not a gate.
+
+Capture each finding as:
 
 ```
 {
@@ -128,7 +139,7 @@ Invoke `parallel-code-review` with these SHAs.
 
 If line numbers aren't provided, leave them null and treat the finding as file-level. Do not invent line numbers — wrong anchors mislead the user later.
 
-**1b. Fan out to verify each finding in parallel.** Single message, one sub-agent per finding (use the `general-purpose` Agent type, `model: sonnet` — verification is a bounded read-and-judge task that runs cheaper/faster on Sonnet 5; the finders stay on the session model for recall). Each sub-agent gets:
+**1b. Fan out to verify each finding in parallel.** Single message, one sub-agent per finding (use the `general-purpose` Agent type, `model: sonnet` — verification is a bounded read-and-judge task that runs cheaper/faster on Sonnet 5; the reviewer stays on the session model for recall). Each sub-agent gets:
 
 ```
 Verify this code-review finding against the actual code on the current branch.
@@ -596,7 +607,6 @@ persisted, so `loadDoors()` never runs — canvas shows pre-alignment geometry f
 
 **Pairs with:**
 - **superpowers:executing-plans** — invoke this skill after plan execution completes
-- **parallel-code-review** — Step 1 finder (fans out specialist reviewers)
-- **superpowers:requesting-code-review** — fallback finder if parallel-code-review is unavailable
+- **superpowers:requesting-code-review** — Step 1 finder (dispatches the reviewer sub-agent)
 - **simplify** (code-simplifier) — Step 2 sub-skill
 - **squash** — Step 3 sub-skill

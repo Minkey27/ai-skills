@@ -8,7 +8,7 @@ description: "MANUAL INVOCATION ONLY. Trigger exclusively when the user types th
 End-to-end review of the open MR on the current branch. The skill orchestrates four jobs that are easy to do badly when done by hand:
 
 1. Gather intent (ticket + MR description) so review findings can be judged against the *goal*, not just the diff.
-2. Run `parallel-code-review` to get an initial set of findings.
+2. Run `superpowers:requesting-code-review` to get an initial set of findings.
 3. Verify each finding by re-reading the actual code, because reviewers (human or LLM) routinely flag things that aren't really problems or whose recommendations don't actually work.
 4. Let the user curate which findings get posted, then post them to GitLab as line-anchored diff notes.
 
@@ -182,18 +182,28 @@ Compare them. Flag any of:
 
 Save discrepancies for the final report — *do not* let them become "findings" themselves. They are upstream of code review.
 
-### 5. Run parallel-code-review
+### 5. Run the code review
 
 Invoke the finder skill:
 
 ```
-Skill: parallel-code-review
+Skill: superpowers:requesting-code-review
 ```
 
-Pass it the `BASE_SHA` and `HEAD_SHA` computed in Step 1. It fans out 5
-dimension-specialist reviewers and returns the deduped findings list. (Fall back to
-`superpowers:requesting-code-review` only if `parallel-code-review` is unavailable.)
-When it produces findings, capture them in a structured list:
+Pass it the `BASE_SHA` and `HEAD_SHA` computed in Step 1 and fill its reviewer
+template: `DESCRIPTION` = what the MR does (use the intent summary from step 4),
+`PLAN_OR_REQUIREMENTS` = the ticket goal when ticket confidence is ≥ Medium,
+otherwise state that no requirements were available rather than inventing them.
+
+The reviewer returns prose, not a schema. Convert its `Issues` sections into the
+structured list below, mapping severity headings onto this skill's scale:
+`Critical` → `critical` (or `high` when it is a bug without data-loss / security
+impact), `Important` → `medium` (or `high` when it breaks a user-visible path),
+`Minor` → `low`, pure style remarks → `nit`. Ignore `Strengths`,
+`Recommendations`, and `Assessment` — only findings feed the rest of this
+workflow, and the reviewer's merge verdict is never posted to the MR.
+
+Capture the findings as:
 
 ```
 [
@@ -215,7 +225,7 @@ If `line_start` / `line_end` aren't given, do not invent them — leave null and
 
 ### 6. Fan out to verify findings
 
-For every finding, dispatch a sub-agent **in parallel** (single message, many tool calls) using the `general-purpose` Agent type with `model: sonnet` — verification is a bounded read-and-judge task that runs cheaper/faster on Sonnet 5, while the finder pass stays on the session model for recall. Each sub-agent gets a self-contained brief:
+For every finding, dispatch a sub-agent **in parallel** (single message, many tool calls) using the `general-purpose` Agent type with `model: sonnet` — verification is a bounded read-and-judge task that runs cheaper/faster on Sonnet 5, while the review pass stays on the session model for recall. Each sub-agent gets a self-contained brief:
 
 ```
 Verify this code-review finding against the actual code on the current branch.
@@ -429,7 +439,7 @@ Don't paste the entire finding object. Don't include verification metadata in th
 - **Tool doesn't resolve to `glab`** (env var says otherwise, or auto-detect finds no GitLab remote) — stop early with a message pointing at the Config section. Don't attempt the workflow with `gh`; the diff-note API shape is completely different.
 - **`glab mr view` returns nothing** — no MR on the branch. Tell the user, suggest `glab mr create --draft` if they want one (omit `--reviewer` unless `$AI_SKILLS_REVIEWERS` is set), and stop.
 - **Local tip doesn't match the MR** — `git rev-parse HEAD` ≠ `diff_refs.head_sha`. Either the remote has commits you don't (pull) or you have unpushed commits (push). Stop until they match — anchors and verification would otherwise run against code the MR doesn't have. The Step 1 guard enforces this.
-- **`parallel-code-review` returns no findings** — perfectly valid. Still produce the discrepancy report from step 4 (if any) and stop without posting.
+- **The reviewer returns no findings** — perfectly valid. Still produce the discrepancy report from step 4 (if any) and stop without posting.
 - **Tracker MCP unavailable** — proceed without the ticket. Note "ticket unavailable" in the discrepancy report.
 - **Findings with invented line numbers** — when the sub-agent reports `issue_real: no` because the cited line doesn't contain the cited problem, treat it as a hallucination, not a real finding.
 
