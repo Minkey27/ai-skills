@@ -5,7 +5,7 @@ A personal collection of [Claude Code](https://docs.claude.com/en/docs/claude-co
 ## Skills included
 
 - **branch-test-review** — generate a styled HTML report of pytest tests added/modified on the current branch.
-- **finalize-branch** — review, simplify, squash, and open an MR for the current branch.
+- **finalize-branch** — review, simplify, squash, and open an MR for the current branch (including the MR title and 200-word-budgeted description).
 - **handoff** — `/handoff` slash command: compact the current conversation into a handoff document (written to the OS temp dir) so a fresh agent can pick the work up, including a "suggested skills" section. Manual invocation only.
 - **mr-review** — `/mr-review` slash command: full review pass on the GitLab MR for the currently-checked-out branch, with per-finding verification and curated diff-note posting.
 - **parallel-code-review** — fan out 5 specialist reviewers (correctness, conventions, tests, security, architecture/performance), dedup findings, and return a structured list; invoked by finalize-branch and mr-review.
@@ -14,13 +14,12 @@ A personal collection of [Claude Code](https://docs.claude.com/en/docs/claude-co
 - **rebase-on-main** — rebase the current feature branch onto `main` with guided conflict resolution.
 - **squash** — reorganize messy or fixup commits into clean logical commits.
 - **worklog** — reconstruct what you worked on in a time window from Claude Code session transcripts + git history; renders a `Subject | Summary | Wallclock | Active estimate` table to help log hours. Reports only; no config required (`AI_SKILLS_TICKET_PREFIX` optionally improves ticket labeling).
-- **write-mr-description** — draft a short GitLab MR description (title + body, budgeted to 200 words) for the current branch and create or update the MR with `glab`; runs forked so it can't narrate the implementation session. `finalize-branch` delegates its Step 4 here on GitLab.
 
 Each skill is a directory under [`skills/`](./skills) containing a `SKILL.md` (and optional helper scripts).
 
 ## Configuration
 
-Six skills (`finalize-branch`, `mr-review`, `process-mr-feedback`, `pytest-docker`, `rebase-on-main`, `write-mr-description`) accept per-project values through environment variables. The rest work out of the box.
+Five skills (`finalize-branch`, `mr-review`, `process-mr-feedback`, `pytest-docker`, `rebase-on-main`) accept per-project values through environment variables. The rest work out of the box.
 
 ```sh
 mkdir -p ~/.config/ai-skills
@@ -55,7 +54,7 @@ Common values to set:
 |---|---|---|
 | `branch-test-review` | No | `git` + Python stdlib only |
 | `squash` | No | Generic git operations |
-| `finalize-branch` | Optional | `AI_SKILLS_MR_TOOL`, `AI_SKILLS_REVIEWERS`, `AI_SKILLS_TICKET_PREFIX` |
+| `finalize-branch` | Optional | `AI_SKILLS_MR_TOOL`, `AI_SKILLS_REVIEWERS`, `AI_SKILLS_TARGET_BRANCH`, `AI_SKILLS_TICKET_PREFIX`. Uses a tracker MCP (ClickUp/Jira/Linear) for ticket intent if one is installed, otherwise skips that lookup. |
 | `handoff` | No | `git` + a writable OS temp dir (`$TMPDIR`, falling back to `/tmp`) |
 | `mr-review` | Required | `AI_SKILLS_MR_TOOL=glab` (GitLab-only); `AI_SKILLS_TICKET_PREFIX` is optional. Skill also leverages a tracker MCP (ClickUp/Jira/Linear) if one is installed, otherwise skips the ticket step. |
 | `parallel-code-review` | No | Generic git operations |
@@ -63,7 +62,6 @@ Common values to set:
 | `pytest-docker` | Optional | `AI_SKILLS_BACKEND_SERVICE` (default `backend`); only useful if you run pytest in docker-compose |
 | `rebase-on-main` | Optional | `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, `AI_SKILLS_MIGRATIONS_PATH`, `AI_SKILLS_ALEMBIC_CMD` (each step is skipped when its variable is empty) |
 | `worklog` | Optional | `AI_SKILLS_TICKET_PREFIX` (labeling only); otherwise `git` + Python stdlib. Scans `~/.claude/projects`. |
-| `write-mr-description` | Required | `glab` (GitLab-only); tracker MCP optional |
 
 All skills run with no config — the project-specific steps just turn into no-ops.
 

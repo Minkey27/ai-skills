@@ -251,68 +251,196 @@ The squash skill has its own internal gates that this skill does NOT override (i
 
 ### Step 4: Create MR
 
-**REQUIRED SUB-SKILL (GitLab):** when `${AI_SKILLS_MR_TOOL:-gh}` is `glab`, delegate this
-step to `write-mr-description`. It owns pushing the branch, detecting the target branch,
-reading the branch scope, extracting and fetching the ticket, drafting the body within its
-budgets, and creating or updating the MR with the required flags. Do not draft a body here
-and do not restate its rules — pass control and report the URL it returns.
+**REQUIRED READING:** [references/mr-description-format.md](references/mr-description-format.md)
+— the body contract, budgets, title rules and banned list, plus the
+[653-vs-164-word example pair](references/mr-description-examples.md). Read both before
+drafting a single line. Everything below is the mechanics; that file is the format.
 
-- If the sub-skill returns a question or an abort instead of a URL (target-branch
-  ambiguity, the word-budget gate, or two or more open MRs), surface that question to the
-  user verbatim and create nothing here — do not fill the gap yourself.
+The same tool path serves GitHub and GitLab — only the final create/update command differs
+on `${AI_SKILLS_MR_TOOL:-gh}`.
 
-Delegating matters for a reason beyond DRY: that skill runs forked, so it cannot see this
-session. A body drafted here would narrate the implementation you just did.
-
-**When `${AI_SKILLS_MR_TOOL:-gh}` is `gh`,** `write-mr-description` does not apply (it is
-GitLab-only). Read `~/.claude/skills/write-mr-description/SKILL.md` — follow its
-`## The body`, `## Budgets`, `## Title`, `## Never` and `## Example` sections to draft the
-title and body yourself, then apply its deletion-pass idea (step 6: cut the weakest `## What`
-bullet, reread, repeat until removing anything would leave a real gap) before running the
-word gate yourself: count the drafted body with `wc -w` against `## Budgets`' cap (200 words)
-and cut if over — the sub-skill's own step 7 block sources a `$STATE`/`$BODY` file that only
-exists on its own delegated path, so do not point at it here; do not reproduce their contents
-here either — that file is the single source of the format, and a copy in this file will
-drift from it.
-
-Extract the ticket for the `Closes` line the same way `write-mr-description` does — before
-drafting the body, since the ticket (if any) is the body's first line:
+**State across blocks.** Each fenced `bash` block below is a **separate Bash invocation** —
+shell variables do not survive between them, only files do. Two values cannot be re-derived
+later (`$UPSTREAM_SHA` must be read *before* 4a's fetch; `$TARGET` may have been settled by
+the user), so 4a writes them to a state file and every later block re-sources it:
 
 ```bash
-BASE_SHA=$(git merge-base "origin/${AI_SKILLS_TARGET_BRANCH:-main}" HEAD)
-PATTERN="${AI_SKILLS_TICKET_PREFIX:-[A-Z]+}-[0-9]+"
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
+```
+
+`$STATE` is not itself carried state — it is a constant expression, re-derived identically in
+every block, landing under the current worktree's git directory (`git rev-parse --git-path`
+resolves to `<main-repo>/.git/worktrees/<name>/mr-state.sh` in a linked worktree). Never
+shared `/tmp`: two concurrent worktrees would collide on one file. 4a truncates it (`: >`) so
+a file left behind by an earlier run can never leak into this one. Values are appended with
+`printf '%q'` so spaces and shell metacharacters survive the round trip.
+
+**4a. Target branch.** Never assume `main`. Branches are frequently stacked on an epic
+branch, and retargeting a stacked branch at `main` proposes merging unreviewed upstream work.
+
+```bash
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
+: > "$STATE"
+
 BRANCH=$(git branch --show-current)
+
+# Captured BEFORE the fetch below — this is the value the force-push lease in 4f pins
+# against. Empty when the branch has no upstream yet.
+UPSTREAM_SHA=$(git rev-parse "@{u}" 2>/dev/null || true)
+
+printf 'BRANCH=%q\n' "$BRANCH" >> "$STATE"
+printf 'UPSTREAM_SHA=%q\n' "$UPSTREAM_SHA" >> "$STATE"
+
+TARGET_DEFAULT="${AI_SKILLS_TARGET_BRANCH:-main}"
+git fetch origin --quiet
+
+BEST=""; BEST_N=""
+for REF in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin \
+             | grep -v -E "^origin/HEAD$|^origin$|^origin/${BRANCH}$"); do
+  MB=$(git merge-base "$REF" HEAD 2>/dev/null) || continue
+  # Skip refs that already contain HEAD — their merge-base IS HEAD, scoring a false 0.
+  [ "$MB" = "$(git rev-parse HEAD)" ] && continue
+  N=$(git rev-list --count "$MB..HEAD")
+  # On a tie, prefer the configured default over an arbitrary sibling branch.
+  if [ -z "$BEST_N" ] || [ "$N" -lt "$BEST_N" ] \
+     || { [ "$N" -eq "$BEST_N" ] && [ "$REF" = "origin/$TARGET_DEFAULT" ]; }; then
+    BEST_N=$N; BEST=$REF
+  fi
+done
+echo "configured default: origin/$TARGET_DEFAULT"
+echo "nearest by divergence: $BEST ($BEST_N commits since its merge-base)"
+```
+
+"Nearest" is the candidate with the **fewest** commits HEAD has accumulated *since diverging
+from it* — not the fewest commits contained by it: `--merged HEAD` containment breaks the
+moment the default branch's tip stops being an ancestor of HEAD (it advances past the fork
+point on almost every branch that isn't freshly forked), silently handing the win to whatever
+merged-in sibling branch happens to still be an ancestor.
+
+- Nearest equals the configured default (or the loop found no candidate) → use the default,
+  say nothing.
+- Nearest differs → **stop and ask the user** which branch to target, quoting both candidates
+  and their commit counts. Do not push and do not create anything until they answer. This is
+  a gate in yolo mode too — yolo removes the confirmations *between* steps, not a genuine
+  ambiguity about where the work gets merged.
+
+Then record the decision. `$TARGET` is the branch name **without** the `origin/` prefix; it is
+consumed as `origin/$TARGET`:
+
+```bash
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
+
+# The settled branch name: the default when it won, the user's answer when they were asked.
+TARGET="<settled branch name, no origin/ prefix>"
+printf 'TARGET=%q\n' "$TARGET" >> "$STATE"
+```
+
+**4b. Ticket** — before drafting, since the ticket (if any) is the body's first line:
+
+```bash
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
+. "$STATE"
+
+BASE_SHA=$(git merge-base "origin/$TARGET" HEAD)
+PATTERN="${AI_SKILLS_TICKET_PREFIX:-[A-Z]+}-[0-9]+"
 TICKET=$(printf '%s\n' "$BRANCH" | grep -oE "$PATTERN" | head -1)
 if [ -z "$TICKET" ]; then
   TICKET=$(git log --format='%s%n%b' $BASE_SHA..HEAD | grep -oE "$PATTERN" | head -1)
 fi
 echo "Ticket: ${TICKET:-<none>}"
+
+printf 'BASE_SHA=%q\n' "$BASE_SHA" >> "$STATE"
+printf 'TICKET=%q\n' "${TICKET:-}" >> "$STATE"
 ```
 
-`Closes <TICKET>` goes first, exactly as `write-mr-description`'s `## The body` specifies —
-the exact form is machine-parsed, so a reworded line silently strands the ticket.
+Merge-base, never `origin/$TARGET` directly — the remote can be ahead of the fork point,
+which pulls unrelated upstream commits into the diff you are describing.
 
-Write the drafted title and body to files under the current worktree's git directory, not
-shared `/tmp` — `git rev-parse --git-path` is worktree-aware, so two concurrent worktrees
-never collide on the same path, and the location sits outside the working tree so it never
-shows up in `git status --porcelain`:
+If a tracker MCP is available (ClickUp/Jira/Linear), fetch the ticket and read it **for
+intent only** — what problem was being solved. Do not copy its wording into `## Why`;
+summarise the outcome. If the lookup fails, derive `Why` from the diff and commit messages,
+and say so in your final report.
+
+`Closes <TICKET>` goes first, exactly as the format reference specifies — the form is
+machine-parsed, so a reworded line silently strands the ticket.
+
+**4c. Draft.** Re-read the diff you are describing (`git diff $BASE_SHA..HEAD`) and write
+from it, not from what you remember implementing — see *Write from the diff, not from the
+session* in the format reference. Write the title and body to files under the current
+worktree's git directory, not shared `/tmp`: `git rev-parse --git-path` is worktree-aware, so
+two concurrent worktrees never collide on the same path, and the location sits outside the
+working tree so it never shows up in `git status --porcelain`.
 
 ```bash
 TITLE_FILE="${MR_TITLE_FILE:-$(git rev-parse --git-path mr-title.txt)}"
 BODY_FILE="${MR_BODY_FILE:-$(git rev-parse --git-path mr-body.md)}"
 ```
 
-Write the drafted title to `$TITLE_FILE` and the drafted body to `$BODY_FILE` — the body
-starting with the `Closes $TICKET` line when `$TICKET` is non-empty — since the
-`gh pr create` call below reads both back from those files. Announce the chosen title and
-the drafted body in your response before creating the MR, so the user sees what was decided.
-If the environment mandates a scratchpad directory instead, set `MR_TITLE_FILE` /
-`MR_BODY_FILE` (or assign the variables directly) to a path inside it.
+Both are constant expressions like `$STATE` — re-derive them in each block that needs them
+rather than persisting the paths, so the step that writes a file and the steps that read it
+cannot drift apart.
 
-Then, still on the gh path:
+The body starts with the `Closes $TICKET` line when `$TICKET` is non-empty. Announce the
+chosen title and the drafted body in your response before creating the MR, so the user sees
+what was decided. If the environment mandates a scratchpad directory instead, set
+`MR_TITLE_FILE` / `MR_BODY_FILE` (or assign the variables directly) to a path inside it.
+
+Check for `.gitlab/merge_request_templates/` (or `.github/pull_request_template.md`). If a
+template exists, note it in your final report but do not follow it — this format wins.
+
+**4d. The deletion pass.** Before the word gate, delete your weakest `## What` bullet. Then
+reread. If the description is still complete, that bullet was noise — and there is probably
+another like it. Repeat until removing anything would leave a real gap. If a real gap
+appears, restore the bullet you just cut and stop deleting.
+
+Then check every surviving bullet against the diff: **if a reviewer would already know it
+from the file list or the code itself, cut it.**
+
+**4e. Word gate.**
 
 ```bash
-git push -u origin "$(git branch --show-current)"
+BODY_FILE="${MR_BODY_FILE:-$(git rev-parse --git-path mr-body.md)}"
+WORDS=$(wc -w < "$BODY_FILE" | tr -d ' ')
+echo "body: $WORDS words"
+if [ "$WORDS" -gt 200 ]; then
+  echo "OVER BUDGET — cut, do not create"
+  exit 1
+fi
+```
+
+Over budget means cut. It does not mean create it anyway and mention the overrun.
+
+**4f. Push, then create or update.**
+
+```bash
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
+. "$STATE"
+
+if [ -z "${UPSTREAM_SHA:-}" ]; then
+  # No upstream existed at 4a — nothing to protect, a first push cannot clobber.
+  git push -u origin "$BRANCH"
+else
+  git push -u origin "$BRANCH" \
+    || git push --force-with-lease="refs/heads/$BRANCH:$UPSTREAM_SHA" -u origin "$BRANCH"
+fi
+```
+
+The plain `git push` gets rejected as non-fast-forward whenever Step 3's squash rewrote
+history that was already pushed. The retry pins `--force-with-lease` to `$UPSTREAM_SHA` — the
+upstream tip captured in **4a, before the fetch**. An unpinned `--force-with-lease` re-reads
+the remote-tracking ref at push time, and 4a's `git fetch origin` already refreshed that ref
+to match whatever is on the remote right now — including a teammate's commit pushed in
+between — so the lease would authorise the exact overwrite it exists to prevent. Pinning to
+the pre-fetch SHA is what makes the lease reject a push when the remote moved out from under
+this branch.
+
+Then, on **`gh`**:
+
+```bash
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
+. "$STATE"
+TITLE_FILE="${MR_TITLE_FILE:-$(git rev-parse --git-path mr-title.txt)}"
+BODY_FILE="${MR_BODY_FILE:-$(git rev-parse --git-path mr-body.md)}"
 
 REVIEWER_FLAG=""
 [ -n "${AI_SKILLS_REVIEWERS:-}" ] && REVIEWER_FLAG="--reviewer $AI_SKILLS_REVIEWERS"
@@ -320,10 +448,71 @@ REVIEWER_FLAG=""
 gh pr create \
   --title "$(cat "$TITLE_FILE")" \
   --body "$(cat "$BODY_FILE")" \
-  --base "${AI_SKILLS_TARGET_BRANCH:-main}" \
+  --base "$TARGET" \
   --draft \
   --assignee @me \
   $REVIEWER_FLAG
+```
+
+On **`glab`**, an MR may already exist on this source branch — and several can share one, in
+which case `glab mr view` errors on the ambiguity. Resolve it explicitly:
+
+```bash
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
+. "$STATE"
+
+OPEN=$(glab api "projects/:id/merge_requests?source_branch=$BRANCH&state=opened" \
+  | python3 -c "import json,sys; print(' '.join(str(m['iid']) for m in json.load(sys.stdin)))")
+echo "open MRs on $BRANCH: ${OPEN:-none}"
+```
+
+- **None** → create:
+
+  ```bash
+  STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
+  . "$STATE"
+  TITLE_FILE="${MR_TITLE_FILE:-$(git rev-parse --git-path mr-title.txt)}"
+  BODY_FILE="${MR_BODY_FILE:-$(git rev-parse --git-path mr-body.md)}"
+
+  REVIEWER_FLAG=""
+  [ -n "${AI_SKILLS_REVIEWERS:-}" ] && REVIEWER_FLAG="--reviewer $AI_SKILLS_REVIEWERS"
+
+  glab mr create \
+    --title "$(cat "$TITLE_FILE")" \
+    --description "$(cat "$BODY_FILE")" \
+    --target-branch "$TARGET" \
+    --draft \
+    --assignee @me \
+    $REVIEWER_FLAG \
+    --yes
+  ```
+
+  `glab` has no `--description-file`, hence the command substitution.
+
+- **Exactly one** → update it in place, including the target branch, so a stale MR never
+  points at the wrong one. Pass the IID you just read from the `$OPEN` output above as a
+  literal — it does not survive into this block:
+
+  ```bash
+  STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
+  . "$STATE"
+  TITLE_FILE="${MR_TITLE_FILE:-$(git rev-parse --git-path mr-title.txt)}"
+  BODY_FILE="${MR_BODY_FILE:-$(git rev-parse --git-path mr-body.md)}"
+
+  glab mr update <IID> \
+    --description "$(cat "$BODY_FILE")" \
+    --title "$(cat "$TITLE_FILE")" \
+    --target-branch "$TARGET"
+  ```
+
+- **Two or more** → **stop.** Update nothing; ask the user which IID to target, listing the
+  ones found.
+
+**Clean up** once the URL is in hand — the state file has served its purpose and a stale one
+is only a hazard for the next run:
+
+```bash
+rm -f "${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
 ```
 
 Return the MR/PR URL when done.
@@ -342,12 +531,15 @@ Return the MR/PR URL when done.
 - Skip the verification fan-out — bucket classification is only trustworthy if sub-agents have confirmed each one
 - Apply unverified code-simplifier suggestions in yolo without printing a summary the user can scan
 - Force-push without the squash skill's verification passing
-- Prefix the MR/PR title with `Draft:` or `WIP:` — banned by `write-mr-description`'s `## Title`
+- Prefix the MR/PR title with `Draft:` or `WIP:` — banned by the format reference's `## Title`; use the `--draft` flag
+- Drop `--draft` or `--assignee @me` from the create command — both go on every invocation
 - Invent or hallucinate a ticket number — only include `Closes <TICKET>` if the reference actually appears in the branch name or commits
-- Leave a literal `<TICKET>` placeholder in the description — banned by `write-mr-description`'s `## The body`
-- Draft the MR body inside this skill when `AI_SKILLS_MR_TOOL=glab` — Step 4 delegates to `write-mr-description`, which runs forked precisely so it cannot narrate this session
-- Restate `write-mr-description`'s format rules in the `gh` path — reference that file instead, or the two copies drift
-- Add a dedicated test-plan/QA-steps section (or any reviewer QA script) to an MR body — banned by `write-mr-description`'s `## Never`
+- Leave a literal `<TICKET>` placeholder in the description — banned by the format reference's `## The body`
+- Narrate the implementation you just did — the body is derived from the diff, the commits and the ticket, never from session memory
+- Restate the format rules inside this SKILL.md — [references/mr-description-format.md](references/mr-description-format.md) is the single source, and a copy here will drift from it
+- Add a dedicated test-plan/QA-steps section (or any reviewer QA script) to an MR body — banned by the format reference's `## Never`
+- Retarget a stacked branch at `main` because the divergence check was skipped — 4a's ambiguity gate holds in yolo mode too
+- Force-push with an unpinned `--force-with-lease` — 4a's fetch makes it authorise the very overwrite it exists to prevent
 
 **Always:**
 - Detect the yolo argument before starting — announce it explicitly so the user can interrupt if they didn't mean it
@@ -359,10 +551,11 @@ Return the MR/PR URL when done.
 - Commit fixes from each step before proceeding to the next
 - Use the tool from `$AI_SKILLS_MR_TOOL` (default `gh`) for MR/PR creation
 - Run lint and format before any commits (project-specific; if your project has them, run them)
-- Delegate Step 4 to `write-mr-description` on GitLab; on GitHub, read that skill's SKILL.md for the format before drafting
+- Read [references/mr-description-format.md](references/mr-description-format.md) and its example pair before drafting the body
+- Detect the target branch by divergence in Step 4a — never assume `${AI_SKILLS_TARGET_BRANCH:-main}`
 - Pass `--draft` and `--assignee @me` on every invocation
 - Only add `--reviewer` when `$AI_SKILLS_REVIEWERS` is non-empty
-- Extract a ticket reference before drafting; if one exists, prepend it per `write-mr-description`'s `## The body`
+- Extract a ticket reference before drafting; if one exists, prepend it per the format reference's `## The body`
 
 ## Finding write-up format
 
@@ -407,4 +600,3 @@ persisted, so `loadDoors()` never runs — canvas shows pre-alignment geometry f
 - **superpowers:requesting-code-review** — fallback finder if parallel-code-review is unavailable
 - **simplify** (code-simplifier) — Step 2 sub-skill
 - **squash** — Step 3 sub-skill
-- **write-mr-description** — Step 4 sub-skill on GitLab (owns push, target detection, body, and MR creation)
