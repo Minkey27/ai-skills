@@ -262,11 +262,6 @@ The squash skill has its own internal gates that this skill does NOT override (i
 
 ### Step 4: Create MR
 
-**REQUIRED READING:** [references/mr-description-format.md](references/mr-description-format.md)
-— the body contract, budgets, title rules and banned list, plus the
-[653-vs-164-word example pair](references/mr-description-examples.md). Read both before
-drafting a single line. Everything below is the mechanics; that file is the format.
-
 The same tool path serves GitHub and GitLab — only the final create/update command differs
 on `${AI_SKILLS_MR_TOOL:-gh}`.
 
@@ -295,7 +290,7 @@ STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
 
 BRANCH=$(git branch --show-current)
 
-# Captured BEFORE the fetch below — this is the value the force-push lease in 4f pins
+# Captured BEFORE the fetch below — this is the value the force-push lease in 4e pins
 # against. Empty when the branch has no upstream yet.
 UPSTREAM_SHA=$(git rev-parse "@{u}" 2>/dev/null || true)
 
@@ -372,12 +367,13 @@ intent only** — what problem was being solved. Do not copy its wording into `#
 summarise the outcome. If the lookup fails, derive `Why` from the diff and commit messages,
 and say so in your final report.
 
-`Closes <TICKET>` goes first, exactly as the format reference specifies — the form is
-machine-parsed, so a reworded line silently strands the ticket.
+`Closes <TICKET>` goes first — keyword, space, ticket id, nothing else on the line.
+Downstream automation parses it to transition the ticket, so a reworded or reformatted line
+silently strands it. Omit the line entirely when no ticket reference exists.
 
 **4c. Draft.** Re-read the diff you are describing (`git diff $BASE_SHA..HEAD`) and write
-from it, not from what you remember implementing — see *Write from the diff, not from the
-session* in the format reference. Write the title and body to files under the current
+from it, not from what you remember implementing — a description written from session
+memory narrates the journey, which no reviewer asked for. Write the title and body to files under the current
 worktree's git directory, not shared `/tmp`: `git rev-parse --git-path` is worktree-aware, so
 two concurrent worktrees never collide on the same path, and the location sits outside the
 working tree so it never shows up in `git status --porcelain`.
@@ -396,32 +392,13 @@ chosen title and the drafted body in your response before creating the MR, so th
 what was decided. If the environment mandates a scratchpad directory instead, set
 `MR_TITLE_FILE` / `MR_BODY_FILE` (or assign the variables directly) to a path inside it.
 
-Check for `.gitlab/merge_request_templates/` (or `.github/pull_request_template.md`). If a
-template exists, note it in your final report but do not follow it — this format wins.
+Check for `.gitlab/merge_request_templates/` (or `.github/pull_request_template.md`) and
+follow it when one exists.
 
-**4d. The deletion pass.** Before the word gate, delete your weakest `## What` bullet. Then
-reread. If the description is still complete, that bullet was noise — and there is probably
-another like it. Repeat until removing anything would leave a real gap. If a real gap
-appears, restore the bullet you just cut and stop deleting.
+**4d. The deletion pass.** Check every bullet against the diff: **if a reviewer would already
+know it from the file list or the code itself, cut it.**
 
-Then check every surviving bullet against the diff: **if a reviewer would already know it
-from the file list or the code itself, cut it.**
-
-**4e. Word gate.**
-
-```bash
-BODY_FILE="${MR_BODY_FILE:-$(git rev-parse --git-path mr-body.md)}"
-WORDS=$(wc -w < "$BODY_FILE" | tr -d ' ')
-echo "body: $WORDS words"
-if [ "$WORDS" -gt 200 ]; then
-  echo "OVER BUDGET — cut, do not create"
-  exit 1
-fi
-```
-
-Over budget means cut. It does not mean create it anyway and mention the overrun.
-
-**4f. Push, then create or update.**
+**4e. Push, then create or update.**
 
 ```bash
 STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
@@ -453,8 +430,8 @@ STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
 TITLE_FILE="${MR_TITLE_FILE:-$(git rev-parse --git-path mr-title.txt)}"
 BODY_FILE="${MR_BODY_FILE:-$(git rev-parse --git-path mr-body.md)}"
 
-REVIEWER_FLAG=""
-[ -n "${AI_SKILLS_REVIEWERS:-}" ] && REVIEWER_FLAG="--reviewer $AI_SKILLS_REVIEWERS"
+REVIEWER_FLAG=()
+[ -n "${AI_SKILLS_REVIEWERS:-}" ] && REVIEWER_FLAG=(--reviewer "$AI_SKILLS_REVIEWERS")
 
 gh pr create \
   --title "$(cat "$TITLE_FILE")" \
@@ -462,8 +439,14 @@ gh pr create \
   --base "$TARGET" \
   --draft \
   --assignee @me \
-  $REVIEWER_FLAG
+  "${REVIEWER_FLAG[@]}"
 ```
+
+The reviewer flag must be an **array**, expanded as `"${REVIEWER_FLAG[@]}"`. A plain string
+expanded unquoted (`$REVIEWER_FLAG`) works only under bash: zsh does not word-split parameter
+expansions, so the whole thing arrives as a single argv element and the tool reports an unknown
+flag named `--reviewer handle1,handle2`. An empty array expands to zero arguments in both
+shells, which is exactly what the no-reviewers case needs.
 
 On **`glab`**, an MR may already exist on this source branch — and several can share one, in
 which case `glab mr view` errors on the ambiguity. Resolve it explicitly:
@@ -485,8 +468,8 @@ echo "open MRs on $BRANCH: ${OPEN:-none}"
   TITLE_FILE="${MR_TITLE_FILE:-$(git rev-parse --git-path mr-title.txt)}"
   BODY_FILE="${MR_BODY_FILE:-$(git rev-parse --git-path mr-body.md)}"
 
-  REVIEWER_FLAG=""
-  [ -n "${AI_SKILLS_REVIEWERS:-}" ] && REVIEWER_FLAG="--reviewer $AI_SKILLS_REVIEWERS"
+  REVIEWER_FLAG=()
+  [ -n "${AI_SKILLS_REVIEWERS:-}" ] && REVIEWER_FLAG=(--reviewer "$AI_SKILLS_REVIEWERS")
 
   glab mr create \
     --title "$(cat "$TITLE_FILE")" \
@@ -494,7 +477,7 @@ echo "open MRs on $BRANCH: ${OPEN:-none}"
     --target-branch "$TARGET" \
     --draft \
     --assignee @me \
-    $REVIEWER_FLAG \
+    "${REVIEWER_FLAG[@]}" \
     --yes
   ```
 
@@ -542,15 +525,15 @@ Return the MR/PR URL when done.
 - Skip the verification fan-out — bucket classification is only trustworthy if sub-agents have confirmed each one
 - Apply unverified code-simplifier suggestions in yolo without printing a summary the user can scan
 - Force-push without the squash skill's verification passing
-- Prefix the MR/PR title with `Draft:` or `WIP:` — banned by the format reference's `## Title`; use the `--draft` flag
+- Prefix the MR/PR title with `Draft:` or `WIP:` — use the `--draft` flag
 - Drop `--draft` or `--assignee @me` from the create command — both go on every invocation
 - Invent or hallucinate a ticket number — only include `Closes <TICKET>` if the reference actually appears in the branch name or commits
-- Leave a literal `<TICKET>` placeholder in the description — banned by the format reference's `## The body`
+- Leave a literal `<TICKET>` placeholder in the description
 - Narrate the implementation you just did — the body is derived from the diff, the commits and the ticket, never from session memory
-- Restate the format rules inside this SKILL.md — [references/mr-description-format.md](references/mr-description-format.md) is the single source, and a copy here will drift from it
-- Add a dedicated test-plan/QA-steps section (or any reviewer QA script) to an MR body — banned by the format reference's `## Never`
+- Add a dedicated test-plan/QA-steps section (or any reviewer QA script) to an MR body — the reviewer reads the diff and CI, and did not ask for a QA script
 - Retarget a stacked branch at `main` because the divergence check was skipped — 4a's ambiguity gate holds in yolo mode too
 - Force-push with an unpinned `--force-with-lease` — 4a's fetch makes it authorise the very overwrite it exists to prevent
+- Build the reviewer flag as a string and expand it unquoted (`$REVIEWER_FLAG`) — that is a bash-only idiom; zsh passes it as one argv element and the create fails on an unknown flag. Use an array plus `"${REVIEWER_FLAG[@]}"`
 
 **Always:**
 - Detect the yolo argument before starting — announce it explicitly so the user can interrupt if they didn't mean it
@@ -562,11 +545,10 @@ Return the MR/PR URL when done.
 - Commit fixes from each step before proceeding to the next
 - Use the tool from `$AI_SKILLS_MR_TOOL` (default `gh`) for MR/PR creation
 - Run lint and format before any commits (project-specific; if your project has them, run them)
-- Read [references/mr-description-format.md](references/mr-description-format.md) and its example pair before drafting the body
 - Detect the target branch by divergence in Step 4a — never assume `${AI_SKILLS_TARGET_BRANCH:-main}`
 - Pass `--draft` and `--assignee @me` on every invocation
 - Only add `--reviewer` when `$AI_SKILLS_REVIEWERS` is non-empty
-- Extract a ticket reference before drafting; if one exists, prepend it per the format reference's `## The body`
+- Extract a ticket reference before drafting; if one exists, prepend a `Closes <TICKET>` first line
 
 ## Finding write-up format
 
