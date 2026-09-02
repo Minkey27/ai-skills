@@ -61,6 +61,9 @@ test tiers and flags. The env var is the portable fallback when no such skill is
   gets to finish — "before" means a turn boundary, not text order.
 - **Curation is two sequential prompts** — Fix candidates first, then Push back / Dismiss / Defer —
   never one combined list. Wait for the answer to each before sending the next.
+- **More than 5 threads: write-ups go to a file, not the terminal.** Only the overview table, the
+  file path and the counts stay on screen (Stage 3a). The write-up *format* is unchanged — it
+  moves medium, it does not get shortened.
 - **Lint/format/tests are a hard pre-commit gate.** If any fail, STOP before the outward batch —
   nothing is pushed, replied, or resolved on top of a red tree.
 - **Stage by explicit path, never `git add -A`.** A dirty tree is tolerated at Stage 1, so a
@@ -319,7 +322,17 @@ This stage has a **hard turn boundary**: you present, your turn ends, and only i
 you ask. Analysis and question in one turn means the question gets answered before the analysis is
 read. "Before" means a turn boundary, not text order.
 
-**3a. Analysis turn (ENDS before any question).** Print, in this order:
+**3a. Analysis turn (ENDS before any question).**
+
+**Where it goes.** Route by finding count:
+
+- **5 or fewer** — print everything below into the terminal, as before.
+- **More than 5** — the detail layer moves to a file and only the scan layer stays on screen:
+  1. Resolve `GITDIR="$(git rev-parse --git-dir)"` and `SLUG="$(git rev-parse --abbrev-ref HEAD | tr '/' '-')"`, then write every thread write-up (cluster headings included) and the overview table to `$GITDIR/mr-feedback-$SLUG.md`. Inside the git dir the file is never committed, never appears in `git status`, and is isolated per worktree — no `.gitignore` edit needed, in any repo.
+  2. The file holds **exactly** the content below, same order and same format, and must stand alone — the user reads it in an editor, where folding, search and jump-to-`file:line` work.
+  3. Print to the terminal **only**: the absolute file path on its own line, a one-line count by severity, the overview table, and any note about threads that already carry prior replies. Nothing else — no write-ups, no excerpts, no "highlights".
+
+Either way the content is, in this order:
 
 1. **A prose write-up per thread** — the *detail layer*, which is why the numbered options in 3b stay
    minimal. Run-on bold lead-ins, not colon-labelled one-liners, and no verification badge line —

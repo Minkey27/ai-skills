@@ -54,6 +54,7 @@ Ticket lookup additionally depends on which tracker MCP is available in the sess
   A timer must not be able to answer that.
 - **Presentation and curation prompts never share a turn.** Step 7a (discrepancy report + finding write-ups + overview table) must end the assistant turn; the first curation prompt goes in a *later* turn, after the user has replied. A same-turn prompt preempts the analysis — the user picks findings without having read the verification results. Text order within a turn does not count as "presenting before prompting".
 - **Curation is two sequential prompts** — Recommended first, wait for the answer, then Optional (see Step 7). Never one combined list.
+- **More than 5 findings: write-ups go to a file, not the terminal.** Only the overview table, the file path and the severity counts stay on screen (Step 7a). The write-up *format* is unchanged — it moves medium, it does not get shortened.
 - **Content-Type header is mandatory** when calling `glab api ... --input -` to create a discussion. Without it GitLab returns HTTP 415. Full position-payload rules and a worked example live in [references/glab-diff-notes.md](references/glab-diff-notes.md). Don't re-derive them.
 - **Sub-agents that verify findings must read the actual files**, not summaries. The whole point is to catch hallucinated or out-of-date findings — that only works if they look at current code at the MR's tip.
 - **Honor `--dry-run`.** If the user invokes `/mr-review --dry-run` (or types "dry run" in the same message), build the payloads and print them as the receipt instead of POSTing. Posting to GitLab is irreversible; dry-run is how the user can sanity-check the anchor lines and body text before committing to the notifications.
@@ -256,7 +257,17 @@ Aggregate the results into a single table keyed by finding id.
 
 ### 7. Present findings, then the curation prompts
 
-**7a. Pre-prompt presentation.** Print — in this order:
+**7a. Pre-prompt presentation.**
+
+**Where it goes.** Route by finding count:
+
+- **5 or fewer** — print everything below into the terminal, as before.
+- **More than 5** — the detail layer moves to a file and only the scan layer stays on screen:
+  1. Resolve `GITDIR="$(git rev-parse --git-dir)"` and `SLUG="$(git rev-parse --abbrev-ref HEAD | tr '/' '-')"`, then write every finding write-up to `$GITDIR/mr-review-$SLUG.md`. Inside the git dir the file is never committed, never appears in `git status`, and is isolated per worktree — no `.gitignore` edit needed, in any repo.
+  2. The file holds **exactly** the content below, same order and same format, and must stand alone — the user reads it in an editor, where folding, search and jump-to-`file:line` work.
+  3. Print to the terminal **only**: the absolute file path on its own line, a one-line count by severity, the discrepancy report (item 1 — it is the verdict on the MR as a whole, not per-finding detail, and the user needs it to weigh the findings), the overview table, and the `excluded, and why` lines. Nothing else — no write-ups, no excerpts, no "highlights".
+
+Either way the content is, in this order:
 
 1. **The discrepancy report from step 4** in plain text. Not selectable; it's context the user needs to decide what to post.
 2. **A prose write-up of each finding** — one block per finding, in the shape below. This is the *detail layer*; the numbered options in 7c stay minimal because the detail already lives here. See [Finding write-up format](#finding-write-up-format) for the full rules — it is prose with run-on bold lead-ins, **not** colon-labelled one-liners, and it carries **no verification badge line**.

@@ -168,7 +168,17 @@ Be specific. Do not parrot the finding back — actually look at the code. Under
 
 Aggregate the results into a table keyed by finding id.
 
-**1c. Present the findings — then END YOUR TURN.** Before any curation prompt, the user must be able to read what each finding *is*, what the *suggested fix* is, and what verification concluded. Print, in this order:
+**1c. Present the findings — then END YOUR TURN.** Before any curation prompt, the user must be able to read what each finding *is*, what the *suggested fix* is, and what verification concluded.
+
+**Where it goes.** Route by finding count:
+
+- **5 or fewer** — print everything below into the terminal, as before.
+- **More than 5** — the detail layer moves to a file and only the scan layer stays on screen:
+  1. Resolve `GITDIR="$(git rev-parse --git-dir)"` and `SLUG="$(git rev-parse --abbrev-ref HEAD | tr '/' '-')"`, then write every finding write-up and the overview table to `$GITDIR/review-$SLUG.md`. Inside the git dir the file is never committed, never appears in `git status`, and is isolated per worktree — no `.gitignore` edit needed, in any repo.
+  2. The file holds **exactly** the content below, same order and same format, and must stand alone — the user reads it in an editor, where folding, search and jump-to-`file:line` work.
+  3. Print to the terminal **only**: the absolute file path on its own line, a one-line count by severity, the overview table, and the `dropped, and why` line. Nothing else — no write-ups, no excerpts, no "highlights".
+
+Either way the content is, in this order:
 
 1. **A prose write-up of each finding** — one block per finding. This is the *detail layer*; the numbered options in 1d stay minimal because the detail already lives here. Full rules in [Finding write-up format](#finding-write-up-format) — prose with run-on bold lead-ins, **not** colon-labelled one-liners, and **no verification badge line**.
 
@@ -540,6 +550,7 @@ Return the MR/PR URL when done.
 - Compute BASE_SHA as merge-base, never use the remote target branch directly
 - Dispatch finding-verification sub-agents in parallel (single message, many tool calls)
 - Present per-finding prose write-ups (Problem. / Fix. / My read., `---` separated) + an overview table in a turn that **ends**, before any curation prompt — see [Finding write-up format](#finding-write-up-format)
+- With more than 5 findings, write the write-ups to `$(git rev-parse --git-dir)/review-<branch>.md` and keep only the path, severity counts and overview table in the terminal (Step 1c) — same format, different medium
 - Classify findings into Recommended (`issue_real ∈ {yes, partial}` AND `fix_sound != no` AND severity ∈ {critical, high, medium}) vs Optional (everything else shown); `fix_sound == risky` goes to Optional regardless of severity; run them as two sequential prompts
 - Drop verified false positives (`issue_real == no`) from the prompts and list them briefly in the 1c presentation
 - Commit fixes from each step before proceeding to the next
