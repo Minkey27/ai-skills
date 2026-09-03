@@ -227,6 +227,12 @@ plannotator annotate "$(git rev-parse --absolute-git-dir)/review-$(git rev-parse
 blocks until the user approves, annotates, or closes the window — which is what makes
 it a read gate: it cannot return before the user has been in the document.
 
+**Run it in the background.** The gate can block far longer than the Bash tool's
+10-minute foreground cap — reviewing async, the user may not get to it for hours — and
+a foreground call is killed at that cap. Launch this block with `run_in_background:
+true`, then poll its output and read the decision JSON once it exits. Never run it
+inline.
+
 **Approve discards annotations.** Clicking Approve emits a bare `approved` payload;
 if the user annotated blocks first, plannotator drops those annotations before the
 skill ever sees them. So a user who has marked up any block must submit via the
