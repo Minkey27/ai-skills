@@ -47,14 +47,14 @@ Ticket lookup additionally depends on which tracker MCP is available in the sess
 
 - **GitLab only.** Resolve the tool early: `AI_SKILLS_MR_TOOL` if set, else auto-detect from the origin remote URL. If it doesn't resolve to `glab`, stop and tell the user this skill targets GitLab; for GitHub, suggest running `superpowers:requesting-code-review` directly.
 - **Branch must match.** Confirm the current branch is the MR's source branch via `glab mr view --output json`. If not, stop and tell the user — switching branches mid-review is the user's call, not yours.
-- **Never post without confirmation.** Even if every finding looks great, present the checklist and wait for the user to pick. Posting to GitLab is irreversible (notifications fire, threads exist forever).
-- **Never use `AskUserQuestion`.** Curation, clarifications, the post confirmation — all of it is
+- **Never post without confirmation.** Even if every finding looks great, open the write-up in the gate and wait for the user's decision. Posting to GitLab is irreversible (notifications fire, threads exist forever).
+- **Never use `AskUserQuestion`.** Clarifications, the post confirmation, and curation on the fallback path — all of it is
   **plain text with numbered options**, then wait for a reply. The tool runs a countdown and assumes a
   default when it expires, and this skill's decision is "which findings get posted to a shared MR".
   A timer must not be able to answer that.
-- **Presentation and curation prompts never share a turn.** Step 7a (discrepancy report + finding write-ups + overview table) must end the assistant turn; the first curation prompt goes in a *later* turn, after the user has replied. A same-turn prompt preempts the analysis — the user picks findings without having read the verification results. Text order within a turn does not count as "presenting before prompting".
-- **Curation is two sequential prompts** — Recommended first, wait for the answer, then Optional (see Step 7). Never one combined list.
-- **More than 5 findings: write-ups go to a file, not the terminal.** Only the overview table, the file path and the severity counts stay on screen (Step 7a). The write-up *format* is unchanged — it moves medium, it does not get shortened.
+- **Curation happens in the plannotator gate.** Step 7a writes the write-up to a file and opens it with `plannotator annotate "$FILE" --gate --json`, which blocks until the user approves, annotates, or closes. `approved` applies every block's `**Default:**`; `dismissed` aborts and posts nothing; `annotated` overrides per finding. The blocking call *is* the read gate — it cannot return before the user has been in the document.
+- **The terminal prompts are the fallback, not the primary path.** When `command -v plannotator` fails or the gate produces no payload, fall back to: print path + counts + discrepancy report + table, **end the turn**, then two sequential numbered text prompts in a later turn — Recommended first, wait, then Optional. Never one combined list, and never `AskUserQuestion`.
+- **Write-ups always go to a file, never the terminal**, whatever the finding count (Step 7a). The document carries the meta block, the counts, the discrepancy report, the overview table and every finding write-up; the terminal carries the path and the counts only.
 - **Content-Type header is mandatory** when calling `glab api ... --input -` to create a discussion. Without it GitLab returns HTTP 415. Full position-payload rules and a worked example live in [references/glab-diff-notes.md](references/glab-diff-notes.md). Don't re-derive them.
 - **Sub-agents that verify findings must read the actual files**, not summaries. The whole point is to catch hallucinated or out-of-date findings — that only works if they look at current code at the MR's tip.
 - **Honor `--dry-run`.** If the user invokes `/mr-review --dry-run` (or types "dry run" in the same message), build the payloads and print them as the receipt instead of POSTing. Posting to GitLab is irreversible; dry-run is how the user can sanity-check the anchor lines and body text before committing to the notifications.
@@ -255,73 +255,136 @@ Be specific. Do not parrot the finding back — actually look at the code. Under
 
 Aggregate the results into a single table keyed by finding id.
 
-### 7. Present findings, then the curation prompts
+### 7. Present findings, then the curation gate
 
-**7a. Pre-prompt presentation.**
+**7a. Presentation.**
 
-**Where it goes.** Route by finding count:
+**Classify first.** Sort every finding into exactly one bucket (7b) *before* you write the document — the bucket sets each block's `**Default:**` line and fills the overview table's Bucket column, both of which the write-up below must already carry.
 
-- **5 or fewer** — print everything below into the terminal, as before.
-- **More than 5** — the detail layer moves to a file and only the scan layer stays on screen:
-  1. Resolve `GITDIR="$(git rev-parse --git-dir)"` and `SLUG="$(git rev-parse --abbrev-ref HEAD | tr '/' '-')"`, then write every finding write-up to `$GITDIR/mr-review-$SLUG.md`. Inside the git dir the file is never committed, never appears in `git status`, and is isolated per worktree — no `.gitignore` edit needed, in any repo.
-  2. The file holds **exactly** the content below, same order and same format, and must stand alone — the user reads it in an editor, where folding, search and jump-to-`file:line` work.
-  3. Print to the terminal **only**: the absolute file path on its own line, a one-line count by severity, the discrepancy report (item 1 — it is the verdict on the MR as a whole, not per-finding detail, and the user needs it to weigh the findings), the overview table, and the `excluded, and why` lines. Nothing else — no write-ups, no excerpts, no "highlights".
+**Where it goes.** Always a file, never the terminal — regardless of finding count.
+Resolve `GITDIR="$(git rev-parse --absolute-git-dir)"` and
+`SLUG="$(git rev-parse --abbrev-ref HEAD | tr '/' '-')"`, then write the whole write-up
+to `$GITDIR/mr-review-$SLUG.md`. Inside the git dir the file is never committed, never
+appears in `git status`, and is isolated per worktree — no `.gitignore` edit needed, in
+any repo.
 
-Either way the content is, in this order:
+The file must stand alone. Content, in this order:
 
-1. **The discrepancy report from step 4** in plain text. Not selectable; it's context the user needs to decide what to post.
-2. **A prose write-up of each finding** — one block per finding, in the shape below. This is the *detail layer*; the numbered options in 7c stay minimal because the detail already lives here. See [Finding write-up format](#finding-write-up-format) for the full rules — it is prose with run-on bold lead-ins, **not** colon-labelled one-liners, and it carries **no verification badge line**.
-
-   ```markdown
-   ### F1 — [medium] service.py:62 — every dropdown click rewrites user_roles
-
-   **Problem.** <mechanism, 2–5 sentences. Name the exact symbols and cite file:line
-   inline as you go. Explain the sequence that produces the bad state and what the
-   user-visible consequence is.>
-
-   **Fix.** <the concrete change. One bullet per edit if there is more than one;
-   inline the actual code line where it clarifies.>
-
-   **My read.** <one sentence: take it / skip it / fold into F<n>, and why.>
-
-   ---
-   ```
-3. **An overview table at the end** — the *scan layer* the user reads right before choosing:
+1. **The meta block** — MR title and number, commit range, file/line counts, ticket +
+   confidence.
+2. **A one-line count by severity**, then the `excluded, and why` lines naming every
+   finding in the **Excluded** bucket and what verification found. These are not
+   selectable options; they are listed so nothing is silently dropped.
+3. **The discrepancy report from step 4**, in plain text. It is the verdict on the MR as
+   a whole rather than per-finding detail, and it calibrates how much to trust the table
+   — so it precedes the table, and it lives in the document, not the terminal.
+4. **The overview table** — the *scan layer*, and the file's index. It comes before the
+   detail it indexes because a file is read from the top. The `ID` cell links to the
+   finding's anchor.
 
    ```
    | ID | Sev | Anchor | Real? | Fix sound? | Bucket |
    |----|-----|--------|-------|------------|--------|
-   | F1 | medium | service.py:62 | ✓ yes | ⚠ risky | Recommended |
-   | F2 | medium | test_routes.py:107 | ✓ yes | ✓ yes | Recommended |
-   | F3 | low | (file-level) | ✓ yes | ✓ yes | Optional |
+   | [F1](#f1--every-dropdown-click-rewrites-user_roles) | medium | service.py:62 | ✓ yes | ⚠ risky | Recommended |
+   | [F2](#f2--route-test-asserts-nothing) | medium | test_routes.py:107 | ✓ yes | ✓ yes | Recommended |
+   | [F3](#f3--stale-docstring) | low | (file-level) | ✓ yes | ✓ yes | Optional |
    ```
 
-**Then END YOUR TURN.** The presentation must be a complete assistant message that **asks nothing**. Putting the report "before" the prompt *within one turn* does **not** satisfy this step — "before" means a turn boundary, not text order. Wait for the user's reply (an acknowledgment like "go", a question about a finding, or a re-classification request) and only then send the first curation prompt from 7c. This reply beat is also where the user can interrogate a finding or move it between buckets *before* the prompt frames the decision.
+   The `ID` anchors assume GitHub-style heading slugs (lowercase, em-dash dropped
+   leaving a double hyphen, spaces → hyphens). If plannotator's renderer slugifies
+   differently the links just don't jump — navigation only, never content — and the
+   block sits right under the table regardless.
 
-Do not skip straight from verification results to the prompt — the write-ups and table are what let the user answer without scrolling back through the session.
+5. **Cluster sections and finding blocks** — the *detail layer*. Full rules in
+   [Finding write-up format](#finding-write-up-format).
+
+**What the terminal gets.** The absolute write-up path on its own line, and a one-line count
+by severity. Nothing else. The discrepancy report and the table are in the document on this
+path — they are printed to the terminal only on the fallback path, where no document is being
+read.
+
+**Hand it over.** Open the write-up in the annotation UI and block on it. The command
+re-derives the path itself — a separate `bash` block does not inherit `$GITDIR`/`$SLUG`
+from the resolve above (only files cross blocks), so inline the substitutions:
+
+```bash
+command -v plannotator >/dev/null &&
+plannotator annotate "$(git rev-parse --absolute-git-dir)/mr-review-$(git rev-parse --abbrev-ref HEAD | tr '/' '-').md" --gate --json
+```
+
+`--gate` adds the Approve button; `--json` emits the decision on stdout. The call blocks
+until the user approves, annotates, or closes the window, which is what makes it a read gate.
+
+**Approve discards annotations.** Clicking Approve emits a bare `approved` payload; if the
+user annotated blocks first, plannotator drops those annotations before the skill sees them.
+A user who has marked up any block must submit via the annotation flow, not Approve — Approve
+means "every default stands, untouched." Say this when you hand the write-up over.
 
 **7b. Classify every finding into exactly one bucket:**
 
-| Bucket | Rule | Prompt it goes into |
+| Bucket | Rule | Default it sets (fallback prompt) |
 |---|---|---|
-| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND (severity ∈ {`critical`, `high`, `medium`} OR the corrected diagnosis is materially useful even at `low`) | Prompt 1 — "Confirm to post" |
-| **Optional** | `issue_real ∈ {yes, partial}` but severity is `low`/`nit`, OR `fix_sound == risky` (real but suggestion has caveats) | Prompt 2 — "Optional additions" |
+| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND (severity ∈ {`critical`, `high`, `medium`} OR the corrected diagnosis is materially useful even at `low`) | `take` (fallback Prompt 1, "Confirm to post") |
+| **Optional** | every shown finding that is not Recommended — `low`/`nit` severity, `fix_sound == risky` (real but the suggestion has caveats), or `fix_sound == no` on a real finding (`issue_real ∈ {yes, partial}` but the suggested fix won't resolve it) | `skip` (fallback Prompt 2, "Optional additions") |
 | **Excluded** | `issue_real == no` (verified false positive), OR sub-agent recommends declining | Not shown as a selectable option. Listed in the discrepancy report instead. |
 
-> **Precedence:** the rules overlap for a `medium`+ finding with `fix_sound == risky` — the risky clause wins and the finding goes to **Optional**, regardless of severity. A real issue whose suggested fix has caveats should not be posted on the skill's recommendation; the user opts in with the caveat visible in the badge.
+> **Precedence:** the rules overlap for a `medium`+ finding with `fix_sound == risky` — the risky clause wins and the finding goes to **Optional**, regardless of severity. A real issue whose suggested fix has caveats should not be posted on the skill's recommendation; the user opts in with the caveat visible in the `Fix sound?` column.
 
 > **Why `partial` belongs in Recommended for Critical findings.** A `partial` verdict often means the *bug* is real but the reviewer's diagnosis of *how* it triggers was wrong. The sub-agent provides a corrected diagnosis; that corrected version is the one that gets posted. Down-rating it to Optional would defeat the verification step's whole purpose.
 
-**7c. Two sequential text prompts.** Plain text with numbered options — **never `AskUserQuestion`**. Wait for a reply to each before sending the next.
+The bucket sets the block's `**Default:**` in the write-up: **Recommended** → `take`,
+**Optional** → `skip`. **Excluded** findings get no `**Default:**` line and are not part of
+the decision surface — they appear only in the `excluded, and why` lines.
 
-- **Prompt 1 — Recommended.** List **only** the Recommended bucket, one numbered line each. Say plainly that every line is one the skill recommends posting, state the default ("all of them unless you say otherwise"), and how to subtract ("reply with the numbers to drop, or 'go' / 'none'"). **Wait for the answer before sending prompt 2.**
-- **Prompt 2 — Optional additions.** A second, separate prompt with **only** the Optional bucket. Nothing here is recommended, so the default is the opposite: **none go out unless the user names numbers.** Skip the prompt entirely when the bucket is empty.
+**7c. Read the gate's decision.**
 
-Do **not** merge the buckets into one list — the recommended picks deserve the user's full attention before the optional ones compete for it, and the two have opposite defaults, which one list cannot express.
+| Decision | Meaning | What you do |
+|---|---|---|
+| `approved` | Approve was clicked | Every `**Default:**` stands. Post the `take` findings. |
+| `dismissed` | The window was closed without approving | **Abort.** Nothing is posted. Say so and stop. |
+| `annotated` | Annotations came back | Each annotation overrides the `**Default:**` of the finding whose block it anchors to. Unannotated findings keep theirs. |
+| anything else | An unrecognised or unparseable payload | **Abort**, exactly as `dismissed`. Print what came back and stop. Never fall through to posting the defaults — an unreadable answer is not an affirmative one, and posting is irreversible. |
 
-Numbered text has no 4-option ceiling, so a long bucket stays **one** prompt — don't fragment it. Order by severity inside each prompt so heavy hitters come first.
+Mapping rules for `annotated`:
 
-**Keep each line minimal** — the detail already appeared in 7a. Line shape: `[F3 medium] auth/repositories.py:128 — every dropdown click rewrites user_roles` (ID + severity + anchor + headline), plus the verification badge in parentheses where one applies (`✓ verified, fix sound`, `⚠ corrected: triggers on sort/filter, not first load`). No summary sentences — the write-ups are a scroll away and stay on screen precisely because nothing covers them.
+- Annotations anchor per block — plannotator's annotatable nodes are paragraphs, headings
+  and list items — so the finding's `###` heading is the intended target. Map an annotation
+  to a finding by the `F<n>` token in its anchor text or its body.
+- The vocabulary is `take`, `skip`, `fold into F<n>`, matched **case-insensitively**. `fold into F<n>` means the note is
+  covered by F*n*: do not post it separately, and record it as folded rather than skipped.
+- An annotation whose text is **not** in that vocabulary — a question, "explain more", "wrong line range" — applies **nothing** for that finding. Answer it, then re-open the write-up.
+- If an annotation cannot be mapped to exactly one finding, **ask**. Never guess, and never
+  quietly fall back to the default.
+
+**Print an applied/skipped/folded receipt** naming every finding and the decision used,
+before posting anything. Posting to GitLab is irreversible, so this receipt is the last
+thing the user sees before notifications fire.
+
+**Silence is never consent.** The only thing that posts anything is an affirmative
+payload — `approved`, or `annotated`, where each annotation overrides its own block and the
+rest keep their defaults. Every other answer aborts: `dismissed` (which plannotator signals as
+`{"decision": "dismissed"}`, or as exit 0 with empty output), and any unrecognised or
+unparseable payload. A failure that yields **no answer at all** is the different case — the
+binary missing, the browser never opening, a non-zero exit with nothing on stdout, the process dying before it emits
+JSON — and only that routes to `7c-fallback` below, where the user answers in the terminal
+instead. **Abort when an answer came back and was not an approval; fall back only when no
+answer could be obtained.**
+
+**7c-fallback. No plannotator.** Guard the gate with `command -v plannotator`. Use this path when
+the binary is absent, or when the invocation produces **no payload** — a launch failure, a missing
+browser, a process that dies before emitting JSON. A non-zero exit that still carried a payload is
+not a fallback case: read it through the decision table above, where anything unrecognised aborts.
+When you take this path, do this instead:
+
+1. Print the absolute file path, the severity count, the discrepancy report, the overview
+   table and the `excluded, and why` lines. **Then END YOUR TURN** — a complete assistant
+   message that asks nothing. "Before" means a turn boundary, not text order.
+2. In a *later* turn, send two sequential plain-text prompts with numbered options —
+   **never `AskUserQuestion`**. Prompt 1 is Recommended only, default all of them, user
+   replies with numbers to drop; **wait for the answer**. Prompt 2 is Optional only, default
+   none unless named; skip it when the bucket is empty.
+3. Keep each line minimal: `[F3 medium] auth/repositories.py:128 — every dropdown click rewrites user_roles`
+   plus a verification flag in parentheses where one applies.
 
 ```markdown
 **Recommended — 4 findings.** Default is all of them. Reply with numbers to drop, or "go".
@@ -332,9 +395,11 @@ Numbered text has no 4-option ceiling, so a long bucket stays **one** prompt —
 4. [F6 medium] handlers.py:2455 — as_of not threaded  (✓ verified)
 ```
 
-**Silence is not an answer.** If no reply comes, stop — do not fall back to the default and post.
+Numbered text has no 4-option ceiling, so a long bucket stays one prompt. Order by severity.
+Never mix buckets. **Silence is not an answer** — if no reply comes, stop; do not post.
 
-For findings in the **Excluded** bucket, list them in the discrepancy report with a one-line "why excluded" so the user knows the skill considered them and what verification found. Don't silently drop findings.
+Either way, **Excluded** findings appear in the `excluded, and why` lines with a one-line
+reason, so nothing is silently dropped.
 
 ### 8. Post the selected findings
 
@@ -398,38 +463,102 @@ Also restate any **Excluded** findings from step 7 with one-line "why excluded" 
 
 ## Finding write-up format
 
-This is the shape of the per-finding blocks in step 7a — what the user reads on screen. It is **not** the diff-note body (that's the next section, and it stays short).
+This is the shape of the per-finding blocks in step 7a — what the user reads in the
+write-up file. It is **not** the diff-note body (that's the next section, and it stays
+short).
 
 ```markdown
-### F4 — [medium] floorplan-editor.js:1543 — applyAdjustFrame derefs state that can be nulled mid-POST
+### F4 — applyAdjustFrame derefs state that can be nulled mid-POST
+`medium` · `Recommended` · `floorplan-editor.js:1543` · verification **verified as claimed**
 
 **Problem.** `applyAdjustFrame` awaits the POST at line 1508. `adjustMode` stays `true`
 for that whole await, so anything that calls `cancelAdjust()` during it — Escape (2901),
 `setDrawMode('pan')` (531), the page-change branch (1256) — runs `_exitAdjust()` and nulls
-`adjustHandles`. Phase 2 then hits 1543 `adjustHandles.a.slice()` and throws. Pre-branch that
-deref sat inside `if (frame)`; this branch hoisted it out. The throw lands *after* the server
-persisted, so `loadDoors()` never runs — canvas shows pre-alignment geometry for saved data.
+`adjustHandles`. Phase 2 then hits 1543 `adjustHandles.a.slice()` and throws. Pre-branch
+that deref sat inside `if (frame)`; this branch hoisted it out.
+
+**Why it bites.** The throw lands *after* the server persisted, so `loadDoors()` never
+runs and the canvas shows pre-alignment geometry for data that is already saved. Nothing
+catches it — the POST succeeded, so there is no failed request to notice.
 
 **Fix.** Two edits in `floorplan-editor.js`:
-- Snapshot both objects into locals before the Phase-1 await and use the snapshots in Phase 2:
-  `const sentA = adjustHandles.a.slice(), sentB = adjustHandles.b.slice();`
+- Snapshot both objects into locals before the Phase-1 await and use the snapshots in
+  Phase 2: `const sentA = adjustHandles.a.slice(), sentB = adjustHandles.b.slice();`
 - Reset `applyBtn.disabled = false` where the adjust toolbar is re-shown, so a session
   cancelled mid-flight doesn't leave the button dead.
 
 **My read.** Take it — small, and it's a regression this branch introduced.
+
+**Default:** take — annotate this block with `skip` to drop it, or `fold into F<n>`.
 
 ---
 ```
 
 **Rules:**
 
-- **`**Problem.**` / `**Fix.**` are run-on bold lead-ins**, terminated with a period, with the prose continuing on the same line. Not `**Issue:** <one line>`. The write-up is prose that explains a *mechanism*: the trigger, the sequence, the resulting state, the user-visible consequence. Cite `file:line` inline as you narrate rather than only in the header.
-- **`**Fix.**` must be actionable, not a restatement of the problem.** Bullet per edit when there is more than one; inline the real code line, the real helper name, the real fixture that already exists. Say when it's a pure test addition with no production change.
-- **No `**Verification:**` badge line.** Verification results get *woven into* the prose instead, as corrections in the reviewer's own voice — "Important correction to the original recommendation: `target_document_version_id` is the row's string id, while `get_page_sizes` needs the int `version` field", "Verification downgraded this to partial: nothing is locked at that point, so it's transaction duration, not lock contention", "That last part is deliberate, not laziness — `page_geometry.py:38-42` documents that PyMuPDF failures aren't a well-defined exception set". Badges live **only** in the overview table.
-- **`**My read.**` is one sentence** — take it / skip it / fold into F*n* — and only when the call isn't obvious from the block.
-- **`---` between every finding.** Including two consecutive findings inside the same cluster. The separator is what makes a long list navigable.
-- **Clustering is encouraged** when findings share one mechanism: give the cluster a `## Cluster A — <the mechanism>` heading and a one-line note on how the findings interact (e.g. "F1's write-back closes F6; F2's narrowing is what makes it legible"). Each finding inside still gets its own full block and its own `---` — a cluster heading is not a licence to merge findings into one paragraph.
-- **The overview table always stays**, last, covering every finding including clustered ones.
+- **The heading is `### F<n> — <headline>`.** ID plus headline, nothing else. It has to
+  work as an editor outline entry, as a link target for the overview table, and as the
+  block a decision annotation attaches to; a 120-character heading fails all three.
+- **One metadata line directly under the heading**, `·`-separated, in this order:
+  severity, bucket, anchor(s) as code spans, verification delta flag.
+  - The **bucket** belongs here because the reader needs to know whether a finding is
+    Recommended while reading it, not only when they reach the table.
+  - **Anchors are code spans** (`` `services.py:120` ``) — that is the form editors and
+    terminals will jump on. Chain them with `→` when the fix spans two places. A finding
+    with no line to point at carries `(file-level)`, or the path it is about when one
+    exists (`tests/integration/.../` for a missing module), matching what the overview
+    table's Anchor column already does.
+  - The **verification delta flag** is 2–4 words, rendered as
+    `verification **<flag>**` — the label `verification` in plain text and the flag
+    itself in bold, exactly as the worked example shows. The flag is typically one of: verified
+    as claimed, corrected the remedy, inverted the diagnosis, widened the line range,
+    downgraded to partial — write a 2–4 word flag of your own when none fits.
+- **`**Problem.**` carries the mechanism only, capped at about 6 lines** — the trigger,
+  the sequence, the resulting state. Cite `file:line` inline as you narrate rather than
+  only in the header. Evidence that is not the mechanism belongs elsewhere: verbatim
+  quotes and code go to `**Fix.**`, and provenance — "this branch hoisted it out", "the
+  commit message names it and then does not touch it" — goes to `**My read.**`. A finding
+  flagged `inverted the diagnosis` or `corrected the remedy` carries two mechanisms, the
+  original claim and the correction, so about 8 lines is its honest ceiling; never buy the
+  cap by dropping the correction, which the no-badge rule gives no other home.
+- **`**Why it bites.**` is required and separate**: 1–2 sentences for the user-visible
+  consequence and what fails to catch it. It exists so `**Problem.**` cannot sprawl. When
+  a finding has no runtime consequence — a stale docstring, a vacuous test — it names who
+  is misled and when instead. Never invent a runtime consequence to fill the line: a
+  fabricated failure mode is worse than an honest "nothing breaks; the next person to read
+  this is misled about X".
+- **Run-on bold lead-ins**, terminated with a period, prose continuing on the same line.
+  Never `**Issue:** <one line>`.
+- **`**Fix.**` must be actionable, not a restatement of the problem.** Bullet per edit
+  when there is more than one; inline the real code line, the real helper name, the real
+  fixture that already exists. Say when it's a pure test addition with no production
+  change.
+- **No `**Verification:**` badge line.** Verification results get *woven into* the prose
+  as corrections in your own voice — "Important correction to the original
+  recommendation: `target_document_version_id` is the row's string id, while
+  `get_page_sizes` needs the int `version` field", "Verification downgraded this to
+  partial: nothing is locked at that point, so it's transaction duration, not lock
+  contention". The metadata line's delta flag is an *index* into that prose, not a
+  substitute for it: it carries no reasoning and no evidence. Full verdicts stay in the
+  overview table.
+- **`**My read.**` is one sentence** — take it / skip it / fold into F*n* — and only when
+  the call isn't obvious from the block. It takes a second sentence only when something
+  changes how the finding is *handled* rather than whether it is right: a finding outside
+  the diff's hunks that cannot be anchored to a line, or one whose scope is wider than
+  this branch.
+- **`**Default:**` is the last line of every block**, before the separator. It states the
+  disposition that applies if the user says nothing, and names the words that override
+  it. Recommended → `take`; Optional → `skip`. This is what the curation gate reads.
+- **`---` between every finding.** Including two consecutive findings inside the same
+  cluster. The separator is what makes a long list navigable.
+- **Clustering is encouraged** when findings share one mechanism: give the cluster a
+  `## Cluster A — <the mechanism>` heading and a one-line note on how the findings
+  interact (e.g. "F1's write-back closes F6; F2's narrowing is what makes it legible").
+  Each finding inside still gets its own full block, its own metadata line, its own
+  `**Default:**` and its own `---` — a cluster heading is not a licence to merge
+  findings into one paragraph.
+- **The overview table comes first**, not last — before the cluster sections, after the
+  count and dropped lines. It covers every finding including clustered ones.
 
 ## Body formatting for diff notes
 
@@ -458,11 +587,24 @@ Don't paste the entire finding object. Don't include verification metadata in th
 
 Code review skills tend to over-trigger findings (false positives) because LLMs pattern-match on diff text without considering surrounding context or whether the recommendation actually fits the codebase's conventions. The verification fan-out exists to catch that *before* the user has to filter manually in a checklist of 30 items. The discrepancy report exists because finding-level review misses the larger question: "is this MR doing what it claims?" — which is often where the biggest issues live.
 
-The **two sequential curation prompts** in Step 7 separate *recommended* from *optional* so the user's job on the first prompt is a scan-and-subtract rather than a careful read of every item to decide what's worth posting. The two buckets also have **opposite defaults** — all of Recommended goes out unless subtracted; none of Optional goes out unless named — which a single list cannot express. Don't collapse them. Each line stays **minimal** (ID + anchor + headline + badge) because the *write-ups-then-table* presentation in 7a already carried the detail: write-ups are the detail layer, the overview table is the scan layer, the numbered prompt is just the decision layer. Repeating finding detail in the prompt duplicates 7a and makes the list unscannable.
+The **curation gate** in Step 7 exists because the turn break it replaces was only ever a
+proxy. That break came from an observed failure, not theory: a run that emitted the full
+report and the first prompt in one turn technically satisfied "print before the prompt", but
+the user was asked to curate findings they had never read. A stopped turn proves the
+assistant stopped talking; it does not prove anyone read anything. A blocking
+`plannotator annotate --gate` call cannot return until the user has been in the document, so
+it enforces the same intent directly.
 
-**Every question is text, never `AskUserQuestion`.** The tool runs a countdown and assumes a default when it expires, and the decision it would be gating here is "post these findings to a shared MR" — a timer must not be able to answer that. Its labels also truncate, which is a bad container for anything the user has to weigh. Text costs nothing by comparison: the analysis stays on screen and scrollable, and with no 4-option ceiling a 12-finding bucket stays one prompt instead of three batches.
+The **per-finding `**Default:**` line** is what let the two sequential prompts go. Those
+prompts existed because Recommended and Optional have **opposite defaults** — all of
+Recommended goes out unless subtracted, none of Optional goes out unless named — and one flat
+list cannot express that. Stating each finding's default inside its own block expresses it
+structurally instead, next to the prose that justifies it, which is strictly more legible
+than a list three screens below the write-ups. The prompts survive as the fallback for
+sessions with no plannotator, and there they keep the sequential split and the turn break
+for exactly the original reason.
 
-The **turn-break between 7a and 7c** exists because of an observed failure, not theory: a run that emitted the full report and the first prompt in one turn technically satisfied "print before the prompt", but the user was asked to curate findings they had never read. Reading requires a turn the user gets to finish; any wording that lets the presentation and the prompt share a turn re-opens that hole.
+**Every question is text, never `AskUserQuestion`.** The tool runs a countdown and assumes a default when it expires, and the decision it would be gating here is "post these findings to a shared MR" — a timer must not be able to answer that. Its labels also truncate, which is a bad container for anything the user has to weigh. Text costs nothing by comparison: with no 4-option ceiling a 12-finding bucket stays one prompt instead of three batches.
 
 The **dry-run** mode exists because the first time you run `/mr-review` on a real MR, you don't yet know whether the line-anchor math is right for this codebase's file layout. Posting eight diff notes to the wrong lines is irreversible and noisy; running the same flow with `--dry-run` first costs one round trip and catches anchor bugs before the team sees them.
 

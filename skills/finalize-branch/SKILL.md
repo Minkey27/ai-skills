@@ -20,13 +20,13 @@ The skill accepts one optional argument that comes through as the literal text a
 | Arg | Effect |
 |---|---|
 | _(none)_ | **Gated mode** (default). User confirms between Steps 1→2, 2→3, 3→4. |
-| `yolo` (also accepts `--yolo`, `auto`, `-y`) | **Yolo mode.** Gates between Steps 2→3→4 are removed. Step 1 keeps the curation checklist (that's selection, not gating). |
+| `yolo` (also accepts `--yolo`, `auto`, `-y`) | **Yolo mode.** Gates between Steps 2→3→4 are removed. Step 1 keeps finding curation (that's selection, not gating). |
 
 Detect by matching the args case-insensitively against `^(yolo|--yolo|auto|-y)$`. If anything else is passed, ask the user what they meant rather than guessing.
 
 **What yolo does NOT change:**
 - Pre-flight checks still run and still stop the workflow on failure.
-- Step 1's presentation + curation prompts (verification fan-out, then Recommended/Optional prompts) still run — the user picks which findings to address.
+- Step 1's verification fan-out and finding curation still run — the write-up opens in the plannotator gate (numbered prompts when plannotator is absent) and the user picks which findings to address.
 - The `squash` sub-skill has its own internal confirmation; we don't override that, surface it to the user as-is.
 - The squash skill's diff-verification (no changes lost) still runs.
 
@@ -76,8 +76,8 @@ digraph finalize {
     preflight [label="Pre-flight checks"];
     review [label="Step 1: superpowers:requesting-code-review"];
     verify [label="Fan out sub-agents\nto verify each finding"];
-    present [label="Present summaries + table\nEND TURN, wait for reply"];
-    curate [label="Sequential curation prompts\n(Recommended, then Optional)" shape=diamond];
+    present [label="Write the write-up file\n(index, table, finding blocks)"];
+    curate [label="Plannotator gate\n(fallback: sequential prompts)" shape=diamond];
     fix [label="Fix selected findings\n+ commit"];
     gate1 [label="User confirms\n(skipped in yolo)" shape=diamond];
     simplify [label="Step 2: Simplify\n(auto-applies in yolo)"];
@@ -97,7 +97,7 @@ digraph finalize {
 
 ### Step 1: Code Review (with verification + curation)
 
-This step is identical in both gated and yolo modes — the curation prompts *are* the gate.
+This step is identical in both gated and yolo modes — the plannotator gate *is* the confirmation.
 
 **REQUIRED SUB-SKILL:** Use `superpowers:requesting-code-review` to generate findings — it dispatches one reviewer sub-agent over the git range and returns a prose review (Strengths / Critical / Important / Minor / Assessment) that step 1a converts into the structured findings list.
 
@@ -168,63 +168,143 @@ Be specific. Do not parrot the finding back — actually look at the code. Under
 
 Aggregate the results into a table keyed by finding id.
 
-**1c. Present the findings — then END YOUR TURN.** Before any curation prompt, the user must be able to read what each finding *is*, what the *suggested fix* is, and what verification concluded.
+**1c. Write the findings up, then hand them to the user.** Before any decision is
+taken, the user must be able to read what each finding *is*, what the *suggested
+fix* is, and what verification concluded.
 
-**Where it goes.** Route by finding count:
+**Classify first (see 1d).** Sort every finding into exactly one bucket — Recommended
+or Optional — *before* you write the document: the bucket sets each block's
+`**Default:**`, and the block can't be written without it. The bucket rules live in
+step 1d below (the bucket table), even though the gate-decision handling shares that step.
 
-- **5 or fewer** — print everything below into the terminal, as before.
-- **More than 5** — the detail layer moves to a file and only the scan layer stays on screen:
-  1. Resolve `GITDIR="$(git rev-parse --git-dir)"` and `SLUG="$(git rev-parse --abbrev-ref HEAD | tr '/' '-')"`, then write every finding write-up and the overview table to `$GITDIR/review-$SLUG.md`. Inside the git dir the file is never committed, never appears in `git status`, and is isolated per worktree — no `.gitignore` edit needed, in any repo.
-  2. The file holds **exactly** the content below, same order and same format, and must stand alone — the user reads it in an editor, where folding, search and jump-to-`file:line` work.
-  3. Print to the terminal **only**: the absolute file path on its own line, a one-line count by severity, the overview table, and the `dropped, and why` line. Nothing else — no write-ups, no excerpts, no "highlights".
+**Where it goes.** Always a file, never the terminal — regardless of finding count.
+Resolve `GITDIR="$(git rev-parse --absolute-git-dir)"` and
+`SLUG="$(git rev-parse --abbrev-ref HEAD | tr '/' '-')"`, then write the whole
+write-up to `$GITDIR/review-$SLUG.md`. Inside the git dir the file is never
+committed, never appears in `git status`, and is isolated per worktree — no
+`.gitignore` edit needed, in any repo.
 
-Either way the content is, in this order:
+The file must stand alone. Content, in this order:
 
-1. **A prose write-up of each finding** — one block per finding. This is the *detail layer*; the numbered options in 1d stay minimal because the detail already lives here. Full rules in [Finding write-up format](#finding-write-up-format) — prose with run-on bold lead-ins, **not** colon-labelled one-liners, and **no verification badge line**.
-
-   ```markdown
-   ### F1 — [medium] services.py:120 — duplicate enum 'Afdeling'
-
-   **Problem.** <mechanism, 2–5 sentences. Name the exact symbols and cite file:line
-   inline as you go. Explain the sequence that produces the bad state and the
-   user-visible consequence.>
-
-   **Fix.** <the concrete change. One bullet per edit if there is more than one;
-   inline the actual code line where it clarifies.>
-
-   **My read.** <one sentence: take it / skip it / fold into F<n>, and why.>
-
-   ---
-   ```
-
-2. **An overview table at the end** — the *scan layer* the user reads right before deciding:
+1. **The meta block** — branch, commit range, file/line counts, and the ticket
+   reference when the branch or its commits carry one.
+2. **A one-line count by severity**, then the `dropped, and why` line naming every
+   verified false positive (`issue_real == no`) and its reason in a few words. These
+   are not decision options; they are listed so the user knows they were considered.
+3. **The overview table** — the *scan layer*, and the file's index. It comes here,
+   before the detail it indexes, because a file is read from the top. The `ID` cell
+   links to the finding's anchor.
 
    ```
    | ID | Sev | Anchor | Real? | Fix sound? | Bucket |
    |----|-----|--------|-------|------------|--------|
-   | F1 | medium | services.py:120 | ✓ yes | ✓ yes | Recommended |
-   | F2 | low | (file-level) | ✓ yes | ⚠ risky | Optional |
+   | [F1](#f1--duplicate-afdeling-enum) | medium | services.py:120 | ✓ yes | ✓ yes | Recommended |
+   | [F2](#f2--stale-cache-key) | low | (file-level) | ✓ yes | ⚠ risky | Optional |
    ```
 
-**Then END YOUR TURN.** The presentation must be a complete assistant message that **asks nothing** — a same-turn prompt means the user picks findings they never read. Putting the report "before" the prompt *within one turn* does **not** satisfy this. Wait for the user's reply (a "go", a question about a finding, or a re-classification) and only then send the curation prompts in 1d.
+   The `ID` anchors assume GitHub-style heading slugs (lowercase, em-dash dropped
+   leaving a double hyphen, spaces → hyphens). If plannotator's renderer slugifies
+   differently the links just don't jump — navigation only, never content — and the
+   block sits right under the table regardless.
 
-**Excluded findings** (`issue_real == no` — verified false positives) are **not** shown as options. List them in a brief "dropped, and why" line inside the presentation so the user knows they were considered.
+4. **Cluster sections and finding blocks** — the *detail layer*. Full rules in
+   [Finding write-up format](#finding-write-up-format).
 
-**1d. Curation prompts** (in the turn *after* the user replies to 1c). Classify each shown finding into one bucket, then send **sequential plain-text prompts with numbered options** — **never `AskUserQuestion`**, never one combined list:
+**What the terminal gets.** The absolute write-up path on its own line, and a one-line
+count by severity. Nothing else — no write-ups, no excerpts, no table, no "highlights".
+The table is in the document, and the document is what is being opened.
 
-| Bucket | Rule | Prompt |
+**Hand it over.** Open the write-up in the annotation UI and block on it. The command
+re-derives the path itself — a separate `bash` block does not inherit `$GITDIR`/`$SLUG`
+from the resolve above (only files cross blocks), so inline the substitutions:
+
+```bash
+command -v plannotator >/dev/null &&
+plannotator annotate "$(git rev-parse --absolute-git-dir)/review-$(git rev-parse --abbrev-ref HEAD | tr '/' '-').md" --gate --json
+```
+
+`--gate` adds the Approve button; `--json` emits the decision on stdout. The call
+blocks until the user approves, annotates, or closes the window — which is what makes
+it a read gate: it cannot return before the user has been in the document.
+
+**Approve discards annotations.** Clicking Approve emits a bare `approved` payload;
+if the user annotated blocks first, plannotator drops those annotations before the
+skill ever sees them. So a user who has marked up any block must submit via the
+annotation flow, not Approve — Approve is for "every default stands, untouched." Say
+this when you hand the write-up over.
+
+**1d. Read the gate's decision.** Classify every shown finding into exactly one bucket
+*before* writing the document — the bucket is what sets each block's `**Default:**`:
+
+| Bucket | Rule | Default |
 |---|---|---|
-| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND severity ∈ {`critical`, `high`, `medium`} | Prompt 1 |
-| **Optional** | shown but not recommended: `low`/`nit` severity, or `fix_sound == risky` (real but the fix has caveats) | Prompt 2 |
+| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND severity ∈ {`critical`, `high`, `medium`} | `take` |
+| **Optional** | shown but not recommended: `low`/`nit` severity, or `fix_sound == risky` (real but the fix has caveats) | `skip` |
 
-> **Precedence:** the rules overlap for a `medium`+ finding with `fix_sound == risky` — the risky clause wins and the finding goes to **Optional**, regardless of severity. A fix with caveats should not be auto-recommended; the user opts in with the caveat visible in the badge.
+> **Precedence:** the rules overlap for a `medium`+ finding with `fix_sound == risky` — the
+> risky clause wins and the finding goes to **Optional**, regardless of severity. A fix with
+> caveats should not be auto-recommended; the user opts in deliberately.
 
-> **Why `partial` counts as real.** A `partial` verdict usually means the *bug* is real but the reviewer's diagnosis of *how* it triggers was wrong. Fix the corrected version from the verification report, not the original claim.
+> **Why `partial` counts as real.** A `partial` verdict usually means the *bug* is real but
+> the reviewer's diagnosis of *how* it triggers was wrong. Fix the corrected version from the
+> verification report, not the original claim.
 
-- **Prompt 1** — only the Recommended bucket, one numbered line each. Say plainly that every line is skill-recommended and that the default is **all of them**; the user replies with numbers to drop (or "go" / "none"). **Wait for the answer before Prompt 2.**
-- **Prompt 2** — only the Optional bucket. Nothing here is recommended, so the default is the opposite: **none are fixed unless the user names numbers.** Skip this prompt if the bucket is empty.
+Verified false positives (`issue_real == no`) never get a `**Default:**` line at all — they
+are named in the `dropped, and why` line and are not part of the decision surface.
 
-**Keep each line minimal** — the detail already appeared in 1c. Line shape: `[F3 medium] services.py:120 — duplicate enum 'Afdeling'` (ID + severity + anchor + headline), plus the verification badge in parentheses where one applies (`✓ verified, fix sound`, `⚠ lines shifted to 125–128`). No summary sentences.
+Then act on what `--json` returned:
+
+| Decision | Meaning | What you do |
+|---|---|---|
+| `approved` | Approve was clicked | Every `**Default:**` stands. Apply. |
+| `dismissed` | The window was closed without approving | **Abort.** Nothing is fixed, committed, or pushed. Say so and stop. |
+| `annotated` | Annotations came back | Each annotation overrides the `**Default:**` of the finding whose block it anchors to. Unannotated findings keep theirs. |
+| anything else | An unrecognised or unparseable payload | **Abort**, exactly as `dismissed`. Print what came back and stop. Never fall through to applying the defaults — an unreadable answer is not an affirmative one. |
+
+Mapping rules for `annotated`:
+
+- Annotations anchor per block — plannotator's annotatable nodes are paragraphs, headings
+  and list items — so the finding's `###` heading is the intended target. Map an annotation
+  to a finding by the `F<n>` token in its anchor text or its body.
+- The vocabulary is `take`, `skip`, `fold into F<n>`, matched **case-insensitively**. `fold into F<n>` means the edit is
+  covered by F*n*: do not apply it separately, and record it as folded rather than skipped.
+- An annotation whose text is **not** in that vocabulary — a question, "explain more",
+  "wrong line range" — applies **nothing** for that finding. Answer it, then re-open the
+  write-up.
+- If an annotation cannot be mapped to exactly one finding, **ask**. Never guess, and never
+  quietly fall back to the default for it.
+
+**Print an applied/skipped/folded receipt** naming every finding and the decision used,
+before doing any work. That receipt is the user's only view of what the gate concluded.
+
+**Silence is never consent.** The only thing that applies the defaults is an affirmative
+payload — `approved`, or `annotated`, where each annotation overrides its own block and the
+rest keep their defaults. Every other answer aborts: `dismissed` (which plannotator signals as
+`{"decision": "dismissed"}`, or as exit 0 with empty output), and any unrecognised or
+unparseable payload. A failure that yields **no answer at all** is the different case — the
+binary missing, the browser never opening, a non-zero exit with nothing on stdout, the process dying before it emits
+JSON — and only that routes to `1d-fallback` below, where the user answers in the terminal
+instead. **Abort when an answer came back and was not an approval; fall back only when no
+answer could be obtained.**
+
+**1d-fallback. No plannotator.** Guard the gate with `command -v plannotator`. Use this path when
+the binary is absent, or when the invocation produces **no payload** — a launch failure, a missing
+browser, a process that dies before emitting JSON. A non-zero exit that still carried a payload is
+not a fallback case: read it through the decision table above, where anything unrecognised aborts.
+When you take this path, do this instead:
+
+1. Print the absolute file path, the severity count, the overview table and the
+   `dropped, and why` line to the terminal. **Then END YOUR TURN** — a complete assistant
+   message that asks nothing. A same-turn prompt means the user picks findings they never
+   read; "before" means a turn boundary, not text order.
+2. In a *later* turn, after the user has replied, send **two sequential plain-text prompts
+   with numbered options** — **never `AskUserQuestion`**. Prompt 1 is the Recommended bucket
+   only: state that the default is all of them and that the user replies with numbers to
+   drop (or "go" / "none"), and **wait for the answer**. Prompt 2 is the Optional bucket
+   only, with the opposite default — **nothing is fixed unless the user names numbers**.
+   Skip Prompt 2 when the bucket is empty.
+3. Keep each line minimal: `[F3 medium] services.py:120 — duplicate enum 'Afdeling'` plus a
+   verification flag in parentheses where one applies. The detail is in the file.
 
 ```markdown
 **Recommended — 3 findings.** Default is all of them. Reply with numbers to drop, or "go".
@@ -234,7 +314,9 @@ Either way the content is, in this order:
 3. [F5 medium] handlers.py:2455 — as_of not threaded  (✓ verified)
 ```
 
-Numbered text has no 4-option ceiling, so a long bucket stays **one** prompt — don't fragment it. Order by severity inside each prompt so heavy hitters come first. Never mix buckets; finish Prompt 1 before Prompt 2. **Silence is not an answer** — if no reply comes, stop rather than applying the default.
+Numbered text has no 4-option ceiling, so a long bucket stays **one** prompt — don't
+fragment it. Order by severity inside each prompt. Never mix buckets.
+**Silence is not an answer** — if no reply comes, stop rather than applying the default.
 
 **1e. Fix the selected findings, commit.** Skip any the user did not select. Commit with a message that names what was fixed (e.g. `fix: close idor on document download, dedupe afdeling enum`) — never session-local finding ids (`F1`, `F3`), which mean nothing in git history.
 
@@ -524,11 +606,11 @@ Return the MR/PR URL when done.
 ## Red Flags
 
 **Never:**
-- Skip the Step 1 curation prompts — even in yolo mode, the user selects which findings to fix. Yolo only skips gates *between* steps, not within Step 1.
-- Use `AskUserQuestion` for anything — curation and the between-step gates are plain text with numbered options. The tool runs a countdown and assumes a default when it expires; "which findings do I fix" and "may I force-push" must not be answerable by a timer.
-- Ask in the **same turn** as the 1c presentation — the report must end its own turn and the user must reply before the first curation prompt.
-- Repeat finding detail (issue text, suggested fix) in the prompt lines — the detail belongs in the 1c write-ups, which stay on screen. Lines stay minimal (ID + severity + anchor + headline + verification badge).
-- Combine Recommended and Optional into one list — they are sequential prompts (Recommended first, wait, then Optional) with opposite defaults.
+- Skip the Step 1 curation gate — even in yolo mode, the user decides which findings get fixed. Yolo only skips gates *between* steps, not within Step 1.
+- Use `AskUserQuestion` for anything — the between-step gates, and curation on the fallback path, are plain text with numbered options. The tool runs a countdown and assumes a default when it expires; "which findings do I fix" and "may I force-push" must not be answerable by a timer.
+- Ask in the **same turn** as the 1c presentation **on the fallback path** — there the report must end its own turn and the user must reply before the first curation prompt. On the primary path the blocking gate carries that guarantee instead.
+- Repeat finding detail (issue text, suggested fix) in the fallback prompt lines — the detail belongs in the 1c write-ups, which the user is reading in the write-up file. Lines stay minimal (ID + severity + anchor + headline + verification flag).
+- Combine Recommended and Optional into one list **on the fallback path** — there they are sequential prompts (Recommended first, wait, then Optional) with opposite defaults. In the write-up they coexist, each block carrying its own `**Default:**`.
 - Treat silence as an answer — no reply means stop, not "apply the default".
 - Skip a gate between Steps 1–3 **in gated mode** — every one needs user confirmation in default mode
 - Treat anything other than the documented yolo aliases (`yolo`, `--yolo`, `auto`, `-y`) as yolo — ask the user instead of guessing
@@ -549,10 +631,11 @@ Return the MR/PR URL when done.
 - Detect the yolo argument before starting — announce it explicitly so the user can interrupt if they didn't mean it
 - Compute BASE_SHA as merge-base, never use the remote target branch directly
 - Dispatch finding-verification sub-agents in parallel (single message, many tool calls)
-- Present per-finding prose write-ups (Problem. / Fix. / My read., `---` separated) + an overview table in a turn that **ends**, before any curation prompt — see [Finding write-up format](#finding-write-up-format)
-- With more than 5 findings, write the write-ups to `$(git rev-parse --git-dir)/review-<branch>.md` and keep only the path, severity counts and overview table in the terminal (Step 1c) — same format, different medium
-- Classify findings into Recommended (`issue_real ∈ {yes, partial}` AND `fix_sound != no` AND severity ∈ {critical, high, medium}) vs Optional (everything else shown); `fix_sound == risky` goes to Optional regardless of severity; run them as two sequential prompts
-- Drop verified false positives (`issue_real == no`) from the prompts and list them briefly in the 1c presentation
+- Write per-finding prose write-ups (metadata line / Problem. / Why it bites. / Fix. / My read. / Default., `---` separated) under an overview table that comes **first** — see [Finding write-up format](#finding-write-up-format)
+- Curate through the plannotator gate (`plannotator annotate "$(git rev-parse --absolute-git-dir)/review-<branch>.md" --gate --json`, path re-derived inline so a separate `bash` block can't lose `$GITDIR`/`$SLUG`): `approved` applies every `**Default:**`, `dismissed` aborts, `annotated` overrides per finding, anything unrecognised aborts. Fall back to the two sequential numbered text prompts only when `command -v plannotator` fails or the gate produces no payload
+- Always write the write-up to `$(git rev-parse --absolute-git-dir)/review-<branch>.md`, whatever the finding count — the terminal never carries the detail layer (Step 1c)
+- Classify findings into Recommended (`issue_real ∈ {yes, partial}` AND `fix_sound != no` AND severity ∈ {critical, high, medium}) vs Optional (everything else shown); `fix_sound == risky` goes to Optional regardless of severity. The bucket sets each block's `**Default:**` — `take` for Recommended, `skip` for Optional
+- Keep verified false positives (`issue_real == no`) off the decision surface — no `**Default:**` line, no fallback prompt line — and name them in the write-up's `dropped, and why` line
 - Commit fixes from each step before proceeding to the next
 - Use the tool from `$AI_SKILLS_MR_TOOL` (default `gh`) for MR/PR creation
 - Run lint and format before any commits (project-specific; if your project has them, run them)
@@ -563,38 +646,101 @@ Return the MR/PR URL when done.
 
 ## Finding write-up format
 
-The shape of the per-finding blocks in Step 1c — what the user reads on screen when curating.
+The shape of the per-finding blocks in Step 1c — what the user reads in the write-up
+file when curating.
 
 ```markdown
-### F4 — [medium] floorplan-editor.js:1543 — applyAdjustFrame derefs state that can be nulled mid-POST
+### F4 — applyAdjustFrame derefs state that can be nulled mid-POST
+`medium` · `Recommended` · `floorplan-editor.js:1543` · verification **verified as claimed**
 
 **Problem.** `applyAdjustFrame` awaits the POST at line 1508. `adjustMode` stays `true`
 for that whole await, so anything that calls `cancelAdjust()` during it — Escape (2901),
 `setDrawMode('pan')` (531), the page-change branch (1256) — runs `_exitAdjust()` and nulls
-`adjustHandles`. Phase 2 then hits 1543 `adjustHandles.a.slice()` and throws. Pre-branch that
-deref sat inside `if (frame)`; this branch hoisted it out. The throw lands *after* the server
-persisted, so `loadDoors()` never runs — canvas shows pre-alignment geometry for saved data.
+`adjustHandles`. Phase 2 then hits 1543 `adjustHandles.a.slice()` and throws. Pre-branch
+that deref sat inside `if (frame)`; this branch hoisted it out.
+
+**Why it bites.** The throw lands *after* the server persisted, so `loadDoors()` never
+runs and the canvas shows pre-alignment geometry for data that is already saved. Nothing
+catches it — the POST succeeded, so there is no failed request to notice.
 
 **Fix.** Two edits in `floorplan-editor.js`:
-- Snapshot both objects into locals before the Phase-1 await and use the snapshots in Phase 2:
-  `const sentA = adjustHandles.a.slice(), sentB = adjustHandles.b.slice();`
+- Snapshot both objects into locals before the Phase-1 await and use the snapshots in
+  Phase 2: `const sentA = adjustHandles.a.slice(), sentB = adjustHandles.b.slice();`
 - Reset `applyBtn.disabled = false` where the adjust toolbar is re-shown, so a session
   cancelled mid-flight doesn't leave the button dead.
 
 **My read.** Take it — small, and it's a regression this branch introduced.
+
+**Default:** take — annotate this block with `skip` to drop it, or `fold into F<n>`.
 
 ---
 ```
 
 **Rules:**
 
-- **`**Problem.**` / `**Fix.**` are run-on bold lead-ins**, terminated with a period, with the prose continuing on the same line. Not `**Issue:** <one line>`. The write-up is prose that explains a *mechanism*: the trigger, the sequence, the resulting state, the user-visible consequence. Cite `file:line` inline as you narrate rather than only in the header.
-- **`**Fix.**` must be actionable, not a restatement of the problem.** Bullet per edit when there is more than one; inline the real code line, the real helper name, the real fixture that already exists. Say when it's a pure test addition with no production change.
-- **No `**Verification:**` badge line.** Verification results get *woven into* the prose instead, as corrections in your own voice — "Important correction to the original recommendation: `target_document_version_id` is the row's string id, while `get_page_sizes` needs the int `version` field", "Verification downgraded this to partial: nothing is locked at that point, so it's transaction duration, not lock contention". Badges live **only** in the overview table.
-- **`**My read.**` is one sentence** — take it / skip it / fold into F*n* — and only when the call isn't obvious from the block.
-- **`---` between every finding.** Including two consecutive findings inside the same cluster. The separator is what makes a long list navigable.
-- **Clustering is encouraged** when findings share one mechanism: give the cluster a `## Cluster A — <the mechanism>` heading and a one-line note on how the findings interact (e.g. "F1's write-back closes F6; F2's narrowing is what makes it legible"). Each finding inside still gets its own full block and its own `---` — a cluster heading is not a licence to merge findings into one paragraph.
-- **The overview table always stays**, last, covering every finding including clustered ones.
+- **The heading is `### F<n> — <headline>`.** ID plus headline, nothing else. It has to
+  work as an editor outline entry, as a link target for the overview table, and as the
+  block a decision annotation attaches to; a 120-character heading fails all three.
+- **One metadata line directly under the heading**, `·`-separated, in this order:
+  severity, bucket, anchor(s) as code spans, verification delta flag.
+  - The **bucket** belongs here because the reader needs to know whether a finding is
+    Recommended while reading it, not only when they reach the table.
+  - **Anchors are code spans** (`` `services.py:120` ``) — that is the form editors and
+    terminals will jump on. Chain them with `→` when the fix spans two places. A finding
+    with no line to point at carries `(file-level)`, or the path it is about when one
+    exists (`tests/integration/.../` for a missing module), matching what the overview
+    table's Anchor column already does.
+  - The **verification delta flag** is 2–4 words, rendered as
+    `verification **<flag>**` — the label `verification` in plain text and the flag
+    itself in bold, exactly as the worked example shows. The flag is typically one of: verified
+    as claimed, corrected the remedy, inverted the diagnosis, widened the line range,
+    downgraded to partial — write a 2–4 word flag of your own when none fits.
+- **`**Problem.**` carries the mechanism only, capped at about 6 lines** — the trigger,
+  the sequence, the resulting state. Cite `file:line` inline as you narrate rather than
+  only in the header. Evidence that is not the mechanism belongs elsewhere: verbatim
+  quotes and code go to `**Fix.**`, and provenance — "this branch hoisted it out", "the
+  commit message names it and then does not touch it" — goes to `**My read.**`. A finding
+  flagged `inverted the diagnosis` or `corrected the remedy` carries two mechanisms, the
+  original claim and the correction, so about 8 lines is its honest ceiling; never buy the
+  cap by dropping the correction, which the no-badge rule gives no other home.
+- **`**Why it bites.**` is required and separate**: 1–2 sentences for the user-visible
+  consequence and what fails to catch it. It exists so `**Problem.**` cannot sprawl. When
+  a finding has no runtime consequence — a stale docstring, a vacuous test — it names who
+  is misled and when instead. Never invent a runtime consequence to fill the line: a
+  fabricated failure mode is worse than an honest "nothing breaks; the next person to read
+  this is misled about X".
+- **Run-on bold lead-ins**, terminated with a period, prose continuing on the same line.
+  Never `**Issue:** <one line>`.
+- **`**Fix.**` must be actionable, not a restatement of the problem.** Bullet per edit
+  when there is more than one; inline the real code line, the real helper name, the real
+  fixture that already exists. Say when it's a pure test addition with no production
+  change.
+- **No `**Verification:**` badge line.** Verification results get *woven into* the prose
+  as corrections in your own voice — "Important correction to the original
+  recommendation: `target_document_version_id` is the row's string id, while
+  `get_page_sizes` needs the int `version` field", "Verification downgraded this to
+  partial: nothing is locked at that point, so it's transaction duration, not lock
+  contention". The metadata line's delta flag is an *index* into that prose, not a
+  substitute for it: it carries no reasoning and no evidence. Full verdicts stay in the
+  overview table.
+- **`**My read.**` is one sentence** — take it / skip it / fold into F*n* — and only when
+  the call isn't obvious from the block. It takes a second sentence only when something
+  changes how the finding is *handled* rather than whether it is right: a finding outside
+  the diff's hunks that cannot be anchored to a line, or one whose scope is wider than
+  this branch.
+- **`**Default:**` is the last line of every block**, before the separator. It states the
+  disposition that applies if the user says nothing, and names the words that override
+  it. Recommended → `take`; Optional → `skip`. This is what the curation gate reads.
+- **`---` between every finding.** Including two consecutive findings inside the same
+  cluster. The separator is what makes a long list navigable.
+- **Clustering is encouraged** when findings share one mechanism: give the cluster a
+  `## Cluster A — <the mechanism>` heading and a one-line note on how the findings
+  interact (e.g. "F1's write-back closes F6; F2's narrowing is what makes it legible").
+  Each finding inside still gets its own full block, its own metadata line, its own
+  `**Default:**` and its own `---` — a cluster heading is not a licence to merge
+  findings into one paragraph.
+- **The overview table comes first**, not last — before the cluster sections, after the
+  count and dropped lines. It covers every finding including clustered ones.
 
 ## Integration
 
