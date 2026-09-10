@@ -142,6 +142,8 @@ In a scratch note (this conversation, not a file):
 
 Flag: claims the diff doesn't deliver; substantial work the description omits; ticket and description disagreeing (when the ticket is trusted); the diff touching something the ticket scopes out. These are the **discrepancy report** — upstream of code review, never findings.
 
+**Verdict:** any flag → `⚠ needs attention`; none → `✓ matches`. Ticket unavailable (Step 2) or ignored (Step 3 Low) → append `(ticket unavailable)` / `(ticket ignored)`; the description-vs-diff comparison still runs and still sets the verdict.
+
 ### 5. Run the code review
 
 ```
@@ -223,7 +225,7 @@ The file stands alone. In order:
 
 1. **Meta block** — MR title and number, commit range, file/line counts, ticket + confidence.
 2. **One-line count by severity**, then `excluded, and why` lines for every **Excluded** finding — not selectable, listed so nothing is silently dropped.
-3. **Discrepancy report** (Step 4) — the verdict on the MR as a whole; it calibrates trust in the table, so it precedes it.
+3. **Discrepancy report** (Step 4) — the verdict on the MR as a whole; it calibrates trust in the table, so it precedes it. **Heading: `## Discrepancy report — <verdict>`**, the verdict from Step 4 — `## Discrepancy report — ⚠ needs attention`, `## Discrepancy report — ✓ matches (ticket unavailable)`. The heading is what a reader scanning the file sees; a mismatch buried in prose under a neutral heading gets skipped. Flags as bullets under it; `✓ matches` gets one line naming what was compared.
 4. **Overview table** — the scan layer and index. `ID` links to the finding's anchor.
 
    ```
@@ -431,7 +433,7 @@ No finding object dump, no verification metadata (that's for you, not the MR aud
 
 ## Why this shape
 
-**Verification fan-out.** LLM reviewers pattern-match on diff text and over-trigger; verification catches that before the user filters 30 items by hand. **Discrepancy report.** Finding-level review misses "is this MR doing what it claims?" — often where the biggest issue is.
+**Verification fan-out.** LLM reviewers pattern-match on diff text and over-trigger; verification catches that before the user filters 30 items by hand. **Discrepancy report.** Finding-level review misses "is this MR doing what it claims?" — often where the biggest issue is. The verdict lives in the heading because a report without one read as background prose and got skipped even when it flagged a mismatch.
 
 **Curation gate.** The turn break it replaced was a proxy: a run once emitted the report and the first prompt in one turn, and the user was asked to curate findings they'd never read. A stopped turn proves the assistant stopped talking, not that anyone read anything; a blocking `plannotator annotate --gate` can't return until they have.
 
