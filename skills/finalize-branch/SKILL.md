@@ -201,8 +201,8 @@ plannotator annotate "$(git rev-parse --absolute-git-dir)/review-$(git rev-parse
 
 | Bucket | Rule | Default |
 |---|---|---|
-| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND severity ∈ {`critical`, `high`, `medium`} | `take` |
-| **Optional** | shown but not recommended: `low`/`nit`, or `fix_sound == risky` (real but the fix has caveats) | `skip` |
+| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND (severity ∈ {`critical`, `high`, `medium`} OR `**My read.**` is take at `low`/`nit`) | `take` |
+| **Optional** | shown but not recommended: `low`/`nit` with a `skip` read, or `fix_sound == risky` (real but the fix has caveats) | `skip` |
 
 > **Precedence:** `medium`+ with `fix_sound == risky` → **Optional**. A caveated fix is not auto-recommended; the user opts in deliberately.
 
@@ -489,7 +489,7 @@ Return the MR/PR URL.
 - Write per-finding prose blocks (metadata line / Problem. / Why it bites. / Fix. / My read. / Default., `---` separated) under an overview table that comes **first** — [Finding write-up format](#finding-write-up-format).
 - Curate through the plannotator gate (`plannotator annotate "$(git rev-parse --absolute-git-dir)/review-<branch>.md" --gate --json`, path re-derived inline): `approved` applies every `**Default:**`, `dismissed` aborts, `annotated` overrides per finding, anything unrecognised aborts. Fall back to the two sequential numbered prompts only when `command -v plannotator` fails or the gate produces no payload.
 - Write the write-up to `$(git rev-parse --absolute-git-dir)/review-<branch>.md`, whatever the count — the terminal never carries the detail layer.
-- Classify Recommended (`issue_real ∈ {yes, partial}` AND `fix_sound != no` AND severity ∈ {critical, high, medium}) vs Optional (everything else shown); `fix_sound == risky` → Optional regardless of severity. Recommended → `take`, Optional → `skip`.
+- Classify Recommended (`issue_real ∈ {yes, partial}` AND `fix_sound != no` AND (severity ∈ {critical, high, medium} OR `**My read.**` is take at low/nit)) vs Optional (everything else shown); `fix_sound == risky` → Optional regardless of severity. Recommended → `take`, Optional → `skip`; `**My read.**` never contradicts `**Default:**`.
 - Keep verified false positives (`issue_real == no`) off the decision surface — no `**Default:**`, no prompt line — and name them in `dropped, and why`.
 - Commit each step's fixes before the next.
 - Use `$AI_SKILLS_MR_TOOL` (default `gh`) for creation.
@@ -543,6 +543,7 @@ catches it — the POST succeeded, so there is no failed request to notice.
 - **No `**Verification:**` badge line.** Corrections are woven into the prose in your own voice ("Important correction to the original recommendation: …", "Verification downgraded this to partial: …"). The delta flag indexes that prose; it carries no reasoning. Full verdicts live in the table.
 - **`**My read.**` — one sentence**: take / skip / fold into F*n*, only when not obvious from the block. A second sentence only when it changes *handling* — outside the diff's hunks, or wider than this branch.
 - **`**Default:**` is the last line** before the separator: the disposition that applies on silence and the words that override it. Recommended → `take`; Optional → `skip`. The gate reads this.
+- **`**My read.**` and `**Default:**` agree** — take ⇔ Recommended. A `take` read at `low`/`nit` is the Recommended criterion for that severity (1d), so bucket it Recommended. A `take` read on a `risky` fix is the read being wrong — precedence keeps the bucket Optional, so the read becomes `skip` with the caveat named. When the two lines disagree at write time, one of them is wrong; fix it before the next block.
 - **`---` between every finding**, including within a cluster.
 - **Cluster when findings share a mechanism**: `## Cluster A — <the mechanism>` plus one line on how they interact ("F1's write-back closes F6"). Every finding inside keeps its full block, metadata line, `**Default:**` and `---`.
 - **Overview table first** — after the counts and dropped line, before the clusters; it covers every finding.
