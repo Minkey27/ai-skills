@@ -13,241 +13,150 @@ description: >
 
 ## Config
 
-This skill reads optional config via the `AI_SKILLS_*` env vars. The recommended setup is one line in `~/.zshenv`:
-
-```sh
-[ -f ~/.config/ai-skills/config.env ] && source ~/.config/ai-skills/config.env
-```
-
-That makes the variables available to every shell Claude spawns. Commands in this skill use `${VAR:-default}` syntax inline, so the skill also works with no config at all.
+Optional `AI_SKILLS_*` env vars, sourced once from `~/.zshenv`
+(`[ -f ~/.config/ai-skills/config.env ] && source ~/.config/ai-skills/config.env`);
+commands below use `${VAR:-default}` so the skill works with no config.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `AI_SKILLS_BACKEND_SERVICE` | `backend` | Name of the docker-compose service that runs pytest |
+| `AI_SKILLS_BACKEND_SERVICE` | `backend` | docker-compose service that runs pytest |
 
-If your project runs pytest outside Docker, this skill is not the right tool — install a plain-pytest skill instead.
+Pytest outside Docker → install a plain-pytest skill instead.
 
-## Subagent Usage
+## Subagents
 
-This skill applies to subagents too. If you are a subagent that has been dispatched with a prompt to run tests:
+Every rule here applies to a subagent dispatched to run tests. Never run a raw
+`docker compose exec <service> pytest …` without loading this skill first (a
+`PreToolUse` hook may block the command until it is loaded). Report the
+`exit: <N>` line and, on non-zero, the failing test names — the dispatcher never
+sees `.test-output.txt`.
 
-- **You may run pytest.** The previous blanket ban on subagent test execution has been lifted.
-- **You must follow every rule in this skill** — Pre-Test Validation, the tier discipline, exit-code-first output handling, all Hard Rules and Anti-Patterns.
-- **Never run a raw `docker compose exec <service> pytest …` command without invoking this skill first.** A `PreToolUse` hook can be configured to block any Bash command containing `pytest` until the skill has been loaded; the same expectation applies to subagents even if a particular session lets the command through.
-- **Report back concisely.** Surface the `exit: <N>` line and (on non-zero) the failing test names from `.test-output.txt`. The dispatcher will not see your output file — summarise it for them.
+**Implementation subagents run Tier 1 only.** Tier 2 belongs to the controller,
+once, at `finalize-branch`. When the dispatch prompt says "run the full suite
+once before committing", that means the Tier 1 run, once — never `tests/`,
+`tests/unit`, `tests/integration`, or a whole context directory. If the blast
+radius truly needs the full suite, say so in your report; do not run it. The
+observed failure mode is not the literal full suite but the flat directory
+"covering" your module, run two or three times per task at minutes each — it
+tells the controller nothing it will not learn at `finalize-branch`.
 
-### If you are an implementation subagent: Tier 1 only
-
-**You do not run the full suite. Ever.** Tier 2 belongs to the controller that
-dispatched you — it runs the suite once, at `finalize-branch`, across all of
-your work plus everyone else's. Your job is the targeted run for the code you
-touched.
-
-This rule exists because it was broken repeatedly and expensively. Observed in
-real dispatches: implementers reporting "full unit suite (2292 tests) and full
-integration suite" *during* a single task — and, more often, the quieter
-variant: "the directory covering my module", a flat few-thousand-test bucket run
-two or three times per task. A full suite takes minutes; an implementer's whole
-useful lifetime is minutes. Two such runs can consume most of it and tell the
-controller nothing it wasn't going to learn at `finalize-branch`.
-
-What to run instead: the Tier 1 recipe below — the test files you added or
-changed plus the files named after the modules you touched, in one run, under
-the ~60 s budget.
-
-**When the dispatch prompt says "run the full suite once before committing",
-that sentence means the Tier 1 run, once, before committing.** It is a generic
-template line; this skill is the project's definition of what "the suite" is
-for an implementer. It never means `tests/`, `tests/unit`, `tests/integration`,
-or a whole context directory.
-
-If you genuinely believe the blast radius needs a full suite, **say so in your
-report and let the controller run it.** Do not run it yourself. "I wanted to be
-thorough" is the exact reasoning this rule overrides — thoroughness at the wrong
-tier is just latency the controller pays for twice.
-
-## Pre-Test Validation
-
-**IMPORTANT**: Before running tests after making changes, always check the server logs first to verify the server started without errors:
+## Before running
 
 ```bash
 docker compose logs --tail=20 "${AI_SKILLS_BACKEND_SERVICE:-backend}"
 ```
 
-Look for:
-- Import errors (e.g., `ImportError`, `ModuleNotFoundError`)
-- Syntax errors
-- Server startup failures
-- Any Python tracebacks
+An `ImportError`, syntax error or startup traceback shows here in seconds, before
+a test run would.
 
-Only proceed with tests once you've confirmed the server is running correctly. This saves time by catching obvious issues (like import errors) before waiting for test execution.
+## Tier 1 — targeted (after each task)
 
-## Test Tiers
-
-### Tier 1 — Targeted tests (after completing a task)
-
-A Tier 1 run is a **list of test files**, not a directory:
+A Tier 1 run is a **list of test files**, never a directory:
 
 1. every test file you added or changed;
-2. the existing test files named after the modules you touched — find them with
-   `ls tests/**/test_<module>*.py`, or `grep -rl <ChangedSymbol> tests/` when
-   the naming does not line up;
-3. if the change is cross-cutting, one `-k` expression naming the affected area.
+2. the existing files named after the modules you touched —
+   `ls tests/**/test_<module>*.py`, or `grep -rl <ChangedSymbol> tests/`;
+3. for a cross-cutting change, one `-k` expression naming the area.
 
-All of it in one command, expected to finish in about a minute:
+1 and 2 are both required: a run of only the tests you wrote proves nothing
+about the existing behaviour you changed. A glob like `test_<module>*.py` is a
+file list, not a directory. One command, about a minute:
 
 ```bash
 docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/integration/path/test_a.py tests/unit/path/test_b.py -x -n 0 -ra --tb=short > .test-output.txt 2>&1; echo "exit: $?"
 ```
 
-**A directory is not a Tier 1 target.** Test trees rarely mirror source
-modules one-to-one; the directory "covering" a route module is often a flat
-bucket of a few thousand tests that takes minutes — a full-suite run wearing a
-targeted label. If you cannot name the files, name the area with `-k`; if you
-cannot do that either, say so in your report and let the controller decide.
+Flags: `-x` stop at the first failure; `-ra` prints the `FAILED`/`ERROR` lines the
+Grep pattern below matches; `--tb=short`; no `-v`/`-s` — debug flags for a single
+failing re-run, 10–100× more output on a passing run.
 
-Flag rationale:
-- `-x` stop on first failure
-- `-ra` prints a `FAILED test_name` / `ERROR test_name` line for each failure in the short summary — these are the lines our grep pattern matches (see Output Handling)
-- `--tb=short` compact tracebacks
-- **No `-v` or `-s` by default** — those produce per-test names and uncaptured stdout, which inflates output for passing runs. Add them only when re-running a specific failing test for debugging (see Failure Handling).
+**A directory is not a Tier 1 target.** The directory "covering" a route module is
+often a flat few-thousand-test bucket — a full-suite run under a targeted label.
+Cannot name the files → name the area with `-k`; cannot do that either → say so
+in the report and let the controller decide.
 
-This is the primary iteration loop:
 - Changed `domain/<module>/services.py` → `tests/integration/domain/<module>/test_services*.py` plus `tests/unit/domain/<module>/test_services*.py`
 - Changed `presentation/routes/<area>/<page>.py` → `tests/integration/presentation/<area>/test_<page>*.py` plus the test files you wrote
 - Changed a template → the route tests that render it (grep the template name under `tests/`)
-- When in doubt, prefer the integration files over the unit files — they cover more ground per second
+- In doubt → the integration files over the unit files; more ground per second
 
-### Tier 2 — Full suite (once, before the MR)
+## Tier 2 — full suite (once per branch)
+
 ```bash
 docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/ -q -n 0 --tb=short > .test-output.txt 2>&1; echo "exit: $?"
 ```
-- No `-x` — collect all failures at once
-- `-n 0` — disable pytest-xdist, run single-process to avoid hoarding CPU/memory on the dev machine
-- **Runs once per branch, by the controller / main session, as the test step of
-  `finalize-branch`** (after the review fixes and simplify commits, before
-  squash). Not between tasks, not per commit, not "at checkpoints" — CI runs the
-  whole suite on every push; a local run earns its minutes only by catching a
-  cross-cutting break before the MR round-trip, and it does that once.
-- If failures are found, classify them (below), fix the ones you caused, re-run once
 
-## Output Handling
+No `-x` — collect every failure. Runs **once per branch, by the controller, as
+the close of `finalize-branch` Step 2** (after the simplify commit, before
+squash). Not between tasks, not per commit: CI runs the suite on every push; the
+local run exists to catch a cross-cutting break before the MR round-trip, once.
+Failures → classify (below), fix yours, re-run once.
 
-All test output goes to `.test-output.txt` (project root). The pytest command always ends with `; echo "exit: $?"` so the exit code is printed in the Bash result. The path is relative, so each worktree gets its own isolated output file — no collisions when running tests in parallel.
+## Output handling
 
-### Exit-code-first — green path is a single command
+Redirect to `.test-output.txt` (relative path — each worktree gets its own) and
+end the command with `; echo "exit: $?"`. **The exit code is the verdict:** 0
+passed; 1 test failures; 2 usage; 3–5 collection/internal. Exit 0 never hides a
+failure.
 
-**The pytest exit code is the authoritative pass/fail signal.** 0 = all tests passed, non-zero = something failed (1 = test failures, 2 = usage, 3-5 = collection/internal). There is no case where exit 0 hides a real failure, so on green there is nothing further to check.
+- `exit: 0` → done. No `grep`, `tail`, `wc` or `Read` to "really confirm" — a
+  second verification command after a green exit is the spiral this rule exists
+  to stop.
+- non-zero → `Grep` tool (never `Bash(grep …)`) on `.test-output.txt` with
+  `^FAILED |^ERROR |^=+ .*(failed|error)` for the names, then `Read` for the
+  tracebacks.
 
-1. **Run the pytest command. Look at the `exit: <N>` line in the Bash output.**
-2. **`exit: 0` → tests passed. Report success and stop.** Do not grep. Do not tail. Do not `wc`. Do not `Read` the file. Do not run a second grep to see the `N passed` summary — the exit code already told you.
-3. **`exit: <non-zero>` → tests failed.** Now use the `Grep` tool (never `Bash(grep ...)`) against `.test-output.txt` with pattern `^FAILED |^ERROR |^=+ .*(failed|error)` to list the failing test names, then `Read` the file for tracebacks.
+## Failures
 
-On the happy path this keeps `.test-output.txt` at zero context cost — nothing is loaded until there's actually something to debug. If you find yourself running a second verification command after seeing `exit: 0`, stop — you have already verified.
+### Classify before debugging — the base may be red
 
-## Failure Handling
+Two buckets: **pre-existing** (fails on the base too) and **new** (yours).
+Debugging a pre-existing failure as if you caused it is the most expensive way to
+waste a task. Cheapest check first; stop when one answers:
 
-### Classifying Failures — do this before debugging anything
-
-**Do not assume the base branch is green.** A suite that has been green for a
-year can still be carrying failures today, and on a large suite it usually is.
-Debugging a pre-existing failure as if you caused it is one of the most
-expensive ways to waste a task: you read a traceback through unrelated code,
-you look for your change in it, and you find nothing because there is nothing
-to find.
-
-So before you debug a failure, classify it. Two buckets: **pre-existing** (fails
-on the base too — not yours, not your task) and **new** (your change caused it).
-
-Classify cheaply, in this order — stop as soon as one answers:
-
-1. **Does the project record a known-failure baseline?** Check the testing docs
-   or the project's `CLAUDE.md`/`AGENTS.md` for a recorded list of accepted
-   failures. If a failure is on that list, it is pre-existing. Done.
-2. **Does the traceback touch your change at all?** If the failing test and its
-   whole traceback live in code you did not touch, and the failure mode has no
-   plausible link to what you changed, treat it as *probably* pre-existing and
-   confirm with step 3 rather than debugging it.
-3. **Run just that test against the base.** One targeted run on a clean base
-   checkout settles it definitively:
+1. A recorded known-failure baseline in the testing docs or `CLAUDE.md`/`AGENTS.md`
+   → pre-existing.
+2. Failing test and whole traceback in code you did not touch, no plausible link →
+   probably pre-existing; confirm with 3.
+3. That one test on a clean base:
    ```bash
-   git stash                                                   # or use a scratch worktree
+   git stash   # or a scratch worktree
    docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/path/to/test.py::test_name -x -n 0 --tb=short > .test-output.txt 2>&1; echo "exit: $?"
    git stash pop
    ```
-   Non-zero on the base → pre-existing. Zero on the base but failing on your
-   branch → yours; now debug it.
+   Non-zero on the base → pre-existing. Zero on the base → yours.
 
-Then act on the classification:
+**Yours** → fix. **Pre-existing** → do not fix, do not fold into your task; report
+the count and names and that you confirmed them on the base. Never a bare count:
+"17 failing" is unusable, "0 new, 17 pre-existing (confirmed on base)" is green.
 
-- **Yours:** fix it. Normal Tier 1 / Tier 2 failure handling below.
-- **Pre-existing:** do not fix it, and do not fold it into your task. Report it
-  separately — say how many pre-existing failures you saw, name them, and state
-  that you confirmed them against the base. A reader who cannot tell your
-  regressions from the background noise cannot use your report.
+Tier 1 must reach `exit: 0`. Tier 2 on a red base never can — its bar is *no new
+failures*; do not chase the zero. Re-deriving the same pre-existing list every
+task → tell the dispatcher; it belongs in the testing docs as a baseline.
 
-Never report a bare count of failures without this split. "17 failing" is
-unusable; "0 new, 17 pre-existing (confirmed on base)" is a green result and
-reads as one.
+### Tier 1 failure (`-x` stopped)
 
-**What "green" means when the base is red.** The exit-code-first rule in Output
-Handling still holds for Tier 1: a targeted run over code you touched should
-reach `exit: 0`, and if it does you are done. But a Tier 2 full suite on a red
-base **can never exit 0**, no matter how correct your change is. Do not chase
-that zero — it is not reachable, and every extra run costs minutes to rediscover
-the same list. For Tier 2 the passing condition is *no new failures*, not
-`exit: 0`. Read the failure list, confirm every entry is pre-existing, and treat
-that as green.
-
-If you find yourself re-deriving the same pre-existing list on every task in a
-plan, say so to whoever dispatched you — that list belongs in the project's
-testing docs as a recorded baseline, so the next task starts from it instead of
-rediscovering it.
-
-### Tier 1 failures (`-x` stopped on the first failure)
-
-1. Exit is non-zero → `Grep` `.test-output.txt` for the failing test name, then `Read` for its traceback
-2. Fix the failure
-3. Re-run **that specific test with `-vs` added** for per-test names and uncaptured stdout:
+1. `Grep` the name, `Read` the traceback, fix.
+2. Re-run that one test with `-vs`:
    ```bash
    docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/path/to/test.py::test_name -x -vs -n 0 --tb=short > .test-output.txt 2>&1; echo "exit: $?"
    ```
-4. Once `exit: 0`, re-run the Tier 1 target directory to catch any neighbours that now fail
+3. On `exit: 0`, re-run the Tier 1 file list for neighbours that now fail.
 
-### Tier 2 failures (full suite collected multiple failures)
+### Tier 2 failures
 
-1. Exit is non-zero → `Grep` `.test-output.txt` for all failing test names, then `Read` the file in full for tracebacks
-2. **Classify each one first** (see Classifying Failures) — the full suite is where pre-existing failures show up in bulk, and they are the ones most likely to be mistaken for yours
-3. **Report every failure to the user before fixing, split into new vs pre-existing** — the full-suite run is the only place you see the complete picture; don't start patching blindly
-4. Fix the failures **you caused**; leave the pre-existing ones alone
-5. Re-run each fixed test individually with Tier 1 flags + `-vs` to confirm each fix in isolation
-6. Re-run the full suite — repeat until the only failures left are the pre-existing ones you classified in step 2
+1. `Grep` every name, `Read` the tracebacks.
+2. Classify each — the full suite is where pre-existing failures arrive in bulk.
+3. Report all of them, split new / pre-existing, **before** fixing anything.
+4. Fix yours; re-run each fixed test alone with `-vs`.
+5. Re-run the suite once; green = only the classified pre-existing list remains.
 
-## Hard Rules
+## Hard rules
 
-- **Always run single-process with `-n 0`** — never let pytest-xdist auto-detect workers. Parallel runs hoard CPU and memory on the dev machine and can mask ordering-dependent bugs. Every pytest command in this skill must pass `-n 0`.
-- Never pipe pytest output through `tail`, `grep`, or `head` in the bash command itself — redirect to `.test-output.txt`, then analyse with the `Grep` tool (using the Grep tool on the saved file is fine and expected)
-- Never use `--ignore` flags to skip failing tests
-- Never run the full suite during implementation — Tier 2 runs once, in `finalize-branch`
-- Never point a Tier 1 run at a directory — name the files (or a `-k` area); a directory run is Tier 2 cost under a Tier 1 label
-- Never use `-v` or `-s` as default flags — they are debugging flags, reserved for re-running a specific failing test
-- If a test fails, read the traceback — do not re-run with different flags to "investigate" (except to add `-vs` on a single failing test)
-- **Never run the full suite as an implementation subagent** — see Subagent Usage. Tier 2 is the controller's job.
-- **Do not assume the base branch is green** — classify every failure as pre-existing or yours before debugging it (see Classifying Failures)
-
-## Anti-Patterns
-
-- **Verification spiral after `exit: 0`** — piling on `tail`, `grep -E "passed|failed"`, `wc -l`, `grep -E "^="`, or `Read .test-output.txt` to "really confirm" the tests passed. The exit code already confirmed it. Stop at the first green signal.
-- **Debugging a pre-existing failure as if you caused it** — reading a traceback through untouched code looking for your change. Classify first; one targeted run on the base is cheaper than any amount of staring.
-- **Chasing `exit: 0` on a full suite whose base is red** — it will never arrive. The Tier 2 bar is "no new failures".
-- **Reporting a bare failure count** — "17 failing" tells the reader nothing about whether your work is sound. Always split new vs pre-existing.
-- **Running the full suite as an implementer "to be thorough"** — thoroughness at the wrong tier is latency the controller pays for twice. Tier 2 is the controller's, and it is running it anyway.
-- **`Bash(grep ...)` against `.test-output.txt`** — prefer the `Grep` tool. Bash greps on this file are a double violation: they're a worse search tool *and* run when the exit code already answered the question.
-- `pytest tests/ -x -q 2>&1 | tail -30` — truncates output, causes re-run spirals
-- `pytest ... -xvs > .test-output.txt` as the default — `-v -s` inflate output 10–100× for passing runs; they belong in the failure re-run step, not the default loop
-- Reading `.test-output.txt` before checking the exit code — wastes tokens on the happy path when `exit: 0` would have confirmed success
-- `pytest tests/ --ignore=tests/integration/...` — hiding failures instead of fixing them
-- Running full suite after every small change — use Tier 1 instead
-- **Running "the directory covering my module" as Tier 1** — `tests/integration/presentation/<area>/` is often a flat few-thousand-test bucket; that is a 3–4 minute run per task dressed as targeted. Name the files.
-- **Reading "run the full suite once before committing" in a dispatch prompt literally** — for an implementer that line means the Tier 1 file list, once
-- Re-running a failed test with different flags — read the traceback you already have
+- `-n 0` on every command — xdist hoards CPU/memory on the dev machine and masks ordering bugs.
+- Never pipe pytest through `tail`, `grep` or `head`; redirect, then the `Grep` tool.
+- Never `--ignore` to skip a failing test.
+- Never `-v`/`-s` by default — only on a single failing test's re-run.
+- Never a directory as a Tier 1 target; never the full suite during implementation; never Tier 2 as a subagent.
+- Read the traceback you already have — no re-running with different flags to "investigate".
+- Never assume the base is green; never report a bare failure count.
