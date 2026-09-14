@@ -75,6 +75,7 @@ digraph finalize {
     fix [label="Fix selected findings\n+ commit"];
     gate1 [label="User confirms\n(skipped in yolo)" shape=diamond];
     simplify [label="Step 2: Simplify\n(auto-applies in yolo)"];
+    suite [label="Step 2 close: full test suite\n(project test-runner skill)"];
     gate2 [label="User confirms\n(skipped in yolo)" shape=diamond];
     squash [label="Step 3: Squash\n(squash skill has its own gates)"];
     gate3 [label="User confirms\n(skipped in yolo)" shape=diamond];
@@ -83,7 +84,7 @@ digraph finalize {
 
     preflight -> review -> verify -> present -> curate -> fix -> gate1;
     gate1 -> simplify [label="proceed"];
-    simplify -> gate2 -> squash [label="proceed"];
+    simplify -> suite -> gate2 -> squash [label="proceed"];
     squash -> gate3 -> mr [label="proceed"];
     mr -> done;
 }
@@ -257,6 +258,16 @@ Numbered text has no 4-option ceiling — one prompt per bucket, never fragmente
 **Gated:** present the proposals; the user approves or rejects each; commit the approved ones; **GATE** before Step 3.
 
 **Yolo:** apply everything the simplifier returns; print a short summary (file + one line per change); commit `refactor: simplify per code-simplifier`; proceed to Step 3 in the same turn.
+
+**Step 2 close — full test suite, once.** After the last Step 2 commit and before
+the gate, run the project's full suite through its test-runner skill
+(`pytest-docker` Tier 2 where that skill is installed; otherwise the project's
+documented full-suite command). This is the branch's single local full-suite
+run: implementers run only targeted tests, and nothing between tasks does, so
+this is where a cross-cutting break surfaces before the MR round-trip. Fix
+failures you caused, commit, re-run once; the squash in Step 3 folds the fix.
+Pre-existing failures are reported, not fixed (the test-runner skill's
+classification rules apply). In yolo the run still happens — only the gate is skipped.
 
 ### Step 3: Squash
 
@@ -494,6 +505,7 @@ Return the MR/PR URL.
 - Commit each step's fixes before the next.
 - Use `$AI_SKILLS_MR_TOOL` (default `gh`) for creation.
 - Run lint and format before any commit (project-specific).
+- Run the full test suite exactly once, at Step 2 close — never earlier in this skill, never again after squash.
 - Detect the target branch by divergence in 4a — never assume `${AI_SKILLS_TARGET_BRANCH:-main}`.
 - Pass `--draft` and `--assignee @me` on every invocation; add `--reviewer` only when `$AI_SKILLS_REVIEWERS` is non-empty.
 - Extract a ticket before drafting; if one exists, prepend `Closes <TICKET>`.

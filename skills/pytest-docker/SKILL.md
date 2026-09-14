@@ -39,23 +39,27 @@ This skill applies to subagents too. If you are a subagent that has been dispatc
 ### If you are an implementation subagent: Tier 1 only
 
 **You do not run the full suite. Ever.** Tier 2 belongs to the controller that
-dispatched you — it runs the suite at its own checkpoints, once, across all of
+dispatched you — it runs the suite once, at `finalize-branch`, across all of
 your work plus everyone else's. Your job is the targeted run for the code you
 touched.
 
 This rule exists because it was broken repeatedly and expensively. Observed in
 real dispatches: implementers reporting "full unit suite (2292 tests) and full
-integration suite" *during* a single task. A full suite takes minutes; an
-implementer's whole useful lifetime is minutes. Two full-suite runs can consume
-most of it and tell the controller nothing it wasn't going to learn at its own
-checkpoint.
+integration suite" *during* a single task — and, more often, the quieter
+variant: "the directory covering my module", a flat few-thousand-test bucket run
+two or three times per task. A full suite takes minutes; an implementer's whole
+useful lifetime is minutes. Two such runs can consume most of it and tell the
+controller nothing it wasn't going to learn at `finalize-branch`.
 
-What to run instead:
+What to run instead: the Tier 1 recipe below — the test files you added or
+changed plus the files named after the modules you touched, in one run, under
+the ~60 s budget.
 
-- The test files you added or changed
-- The Tier 1 directory covering the modules you touched
-- One targeted regression selection if your change is cross-cutting — a `-k`
-  expression naming the affected area, never the whole tree
+**When the dispatch prompt says "run the full suite once before committing",
+that sentence means the Tier 1 run, once, before committing.** It is a generic
+template line; this skill is the project's definition of what "the suite" is
+for an implementer. It never means `tests/`, `tests/unit`, `tests/integration`,
+or a whole context directory.
 
 If you genuinely believe the blast radius needs a full suite, **say so in your
 report and let the controller run it.** Do not run it yourself. "I wanted to be
@@ -81,9 +85,26 @@ Only proceed with tests once you've confirmed the server is running correctly. T
 ## Test Tiers
 
 ### Tier 1 — Targeted tests (after completing a task)
+
+A Tier 1 run is a **list of test files**, not a directory:
+
+1. every test file you added or changed;
+2. the existing test files named after the modules you touched — find them with
+   `ls tests/**/test_<module>*.py`, or `grep -rl <ChangedSymbol> tests/` when
+   the naming does not line up;
+3. if the change is cross-cutting, one `-k` expression naming the affected area.
+
+All of it in one command, expected to finish in about a minute:
+
 ```bash
-docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/integration/path/to/relevant_test.py -x -n 0 -ra --tb=short > .test-output.txt 2>&1; echo "exit: $?"
+docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/integration/path/test_a.py tests/unit/path/test_b.py -x -n 0 -ra --tb=short > .test-output.txt 2>&1; echo "exit: $?"
 ```
+
+**A directory is not a Tier 1 target.** Test trees rarely mirror source
+modules one-to-one; the directory "covering" a route module is often a flat
+bucket of a few thousand tests that takes minutes — a full-suite run wearing a
+targeted label. If you cannot name the files, name the area with `-k`; if you
+cannot do that either, say so in your report and let the controller decide.
 
 Flag rationale:
 - `-x` stop on first failure
@@ -91,20 +112,24 @@ Flag rationale:
 - `--tb=short` compact tracebacks
 - **No `-v` or `-s` by default** — those produce per-test names and uncaptured stdout, which inflates output for passing runs. Add them only when re-running a specific failing test for debugging (see Failure Handling).
 
-Run tests matching the changed modules — this is the primary iteration loop:
-- Changed `domain/<module>/services.py` → run `tests/integration/domain/<module>/`
-- Changed `presentation/routes/<area>/` → run `tests/integration/presentation/<area>/`
-- Changed domain logic with unit tests → run `tests/unit/domain/<module>/` alongside integration tests
-- When in doubt, run the integration tests for the affected area — they cover more ground than unit tests alone
+This is the primary iteration loop:
+- Changed `domain/<module>/services.py` → `tests/integration/domain/<module>/test_services*.py` plus `tests/unit/domain/<module>/test_services*.py`
+- Changed `presentation/routes/<area>/<page>.py` → `tests/integration/presentation/<area>/test_<page>*.py` plus the test files you wrote
+- Changed a template → the route tests that render it (grep the template name under `tests/`)
+- When in doubt, prefer the integration files over the unit files — they cover more ground per second
 
-### Tier 2 — Full suite (checkpoints + final verification)
+### Tier 2 — Full suite (once, before the MR)
 ```bash
 docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/ -q -n 0 --tb=short > .test-output.txt 2>&1; echo "exit: $?"
 ```
 - No `-x` — collect all failures at once
 - `-n 0` — disable pytest-xdist, run single-process to avoid hoarding CPU/memory on the dev machine
-- Run at checkpoints (every 3 completed tasks in a multi-task plan) and as final verification
-- If failures are found, fix them before continuing
+- **Runs once per branch, by the controller / main session, as the test step of
+  `finalize-branch`** (after the review fixes and simplify commits, before
+  squash). Not between tasks, not per commit, not "at checkpoints" — CI runs the
+  whole suite on every push; a local run earns its minutes only by catching a
+  cross-cutting break before the MR round-trip, and it does that once.
+- If failures are found, classify them (below), fix the ones you caused, re-run once
 
 ## Output Handling
 
@@ -203,7 +228,8 @@ rediscovering it.
 - **Always run single-process with `-n 0`** — never let pytest-xdist auto-detect workers. Parallel runs hoard CPU and memory on the dev machine and can mask ordering-dependent bugs. Every pytest command in this skill must pass `-n 0`.
 - Never pipe pytest output through `tail`, `grep`, or `head` in the bash command itself — redirect to `.test-output.txt`, then analyse with the `Grep` tool (using the Grep tool on the saved file is fine and expected)
 - Never use `--ignore` flags to skip failing tests
-- Never run the full suite during implementation — only at checkpoints and final verification (Tier 2)
+- Never run the full suite during implementation — Tier 2 runs once, in `finalize-branch`
+- Never point a Tier 1 run at a directory — name the files (or a `-k` area); a directory run is Tier 2 cost under a Tier 1 label
 - Never use `-v` or `-s` as default flags — they are debugging flags, reserved for re-running a specific failing test
 - If a test fails, read the traceback — do not re-run with different flags to "investigate" (except to add `-vs` on a single failing test)
 - **Never run the full suite as an implementation subagent** — see Subagent Usage. Tier 2 is the controller's job.
@@ -222,4 +248,6 @@ rediscovering it.
 - Reading `.test-output.txt` before checking the exit code — wastes tokens on the happy path when `exit: 0` would have confirmed success
 - `pytest tests/ --ignore=tests/integration/...` — hiding failures instead of fixing them
 - Running full suite after every small change — use Tier 1 instead
+- **Running "the directory covering my module" as Tier 1** — `tests/integration/presentation/<area>/` is often a flat few-thousand-test bucket; that is a 3–4 minute run per task dressed as targeted. Name the files.
+- **Reading "run the full suite once before committing" in a dispatch prompt literally** — for an implementer that line means the Tier 1 file list, once
 - Re-running a failed test with different flags — read the traceback you already have
