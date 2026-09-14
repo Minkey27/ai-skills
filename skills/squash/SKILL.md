@@ -178,21 +178,13 @@ If verification fails, restore immediately:
 git reset --hard $PRE_SQUASH_REF
 ```
 
-## Step 5: Run Tests
+## Step 5: Run Tests — only after a conflicted squash
 
-Run the project's test suite to confirm nothing broke. Use whatever test runner the project defines (check CLAUDE.md, Makefile, or package scripts). If a pytest-docker skill or similar is available, use it.
+Run the project's test suite only when the squash hit merge conflicts that you resolved by hand. Use whatever test runner the project defines (check CLAUDE.md, Makefile, or package scripts). If a pytest-docker skill or similar is available, use it.
+
+A conflict-free squash — simple case or multi-group — needs no test run: Step 4's diff check already proved the working tree is byte-identical to the pre-squash tip, and identical trees test identically. Skip Step 5 and say so explicitly in Step 6's report (e.g. "Tests: skipped — no conflicts, clean diff-check"). Never skip silently — the report must show the reasoning was applied, not just omit the line.
 
 **Verifying results:** With parallel test runners or `-q` mode, the summary line (`X passed`) may not appear. The reliable signal is **absence of `FAILED` or `ERROR`** in the output — grep for those rather than looking for a pass count.
-
-**Exception — skip rerun only when ALL of these hold:**
-
-1. **Simple case was used** (`git reset --soft` + single commit — Step 3's "simple case" path). Multi-group interactive rebase always reruns tests, no exception — reordering/fixup can replay commits into intermediate states that never existed together, so a clean Step 4 diff doesn't rule out an ordering-dependent break introduced mid-rebase.
-2. **Step 4's diff check passed clean** (no output). This proves the working tree is byte-identical to the pre-squash tip — `reset --soft` doesn't touch the tree, only history, so this is guaranteed by construction for the simple case, not just likely.
-3. **Tests are known green on the pre-squash tip in this session** — either you ran them yourself earlier in this session, or the user explicitly confirms they're currently passing. An assumption ("probably fine") does not count; a stale CI badge does not count. If there's no positive evidence, run the tests.
-
-If all three hold: skip Step 5, and say so explicitly in Step 6's report (e.g. "Tests: skipped — simple squash, clean diff-check, tests confirmed green pre-squash"). Never skip silently — the report must show the reasoning was applied, not just omit the line.
-
-Rationale: a `reset --soft` squash changes history shape only, never tree content. If the tree is provably identical (point 2) and was already proven to pass (point 3), rerunning is testing the same tree twice — the cost is wall-clock time, not risk reduction.
 
 ## Step 6: Report
 
@@ -233,7 +225,7 @@ GIT_EDITOR=/tmp/squash-msg-editor.sh git rebase --continue
 | Forgetting to snapshot diff before squash | Always do Step 1 first — it's your undo safety net |
 | Squashing without asking user | Always present grouping proposal and wait for confirmation |
 | Losing changes during reorder | The before/after diff check catches this — never skip it |
-| Not running tests after | A squash can silently break things if commits had ordering dependencies — unless the Step 5 exception applies (simple case + clean diff-check + tests already known green) |
+| Skipping tests after a conflicted squash | Hand-resolved conflicts are the one place a squash can change behaviour — Step 5 runs the suite then, and only then; a conflict-free squash skips it on the strength of Step 4's clean diff-check |
 | Force-pushing without telling user | After squash, remind user the branch needs force-push and confirm before doing it |
 | Assuming base is always `main` | Branch may be stacked on another feature branch — always run Step 0 to detect the real base |
 | Diffing against branch tip instead of merge-base | The base branch tip can move — always diff against `$MERGE_BASE` for stable comparison |

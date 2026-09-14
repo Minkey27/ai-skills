@@ -265,15 +265,14 @@ the gate, run the project's full suite through its test-runner skill
 documented full-suite command). This is the branch's single local full-suite
 run: implementers run only targeted tests, and nothing between tasks does, so
 this is where a cross-cutting break surfaces before the MR round-trip. Fix
-failures you caused, commit, re-run once; the squash in Step 3 folds the fix.
-Pre-existing failures are reported, not fixed (the test-runner skill's
-classification rules apply). In yolo the run still happens — only the gate is skipped.
+failures, commit, re-run once; the squash in Step 3 folds the fix. Every failure
+on the branch is the branch's own. In yolo the run still happens — only the gate is skipped.
 
 ### Step 3: Squash
 
 **REQUIRED SUB-SKILL:** `squash`
 
-Its internal gates (grouping confirmation, diff-verification) are safety, not approval — this skill never overrides them, yolo included. Silencing them is a change to `squash` itself.
+Its internal gates (grouping confirmation, diff-verification) are safety, not approval — this skill never overrides them, yolo included. Silencing them is a change to `squash` itself. Its Step 5 test run fires only after a squash with hand-resolved conflicts; otherwise the Step 2-close run stands and the squash report says so.
 
 **Gated:** after squash, **GATE** before Step 4. **Yolo:** after squash (including its own confirmation), proceed to Step 4 in the same turn.
 
@@ -505,7 +504,7 @@ Return the MR/PR URL.
 - Commit each step's fixes before the next.
 - Use `$AI_SKILLS_MR_TOOL` (default `gh`) for creation.
 - Run lint and format before any commit (project-specific).
-- Run the full test suite exactly once, at Step 2 close — never earlier in this skill, never again after squash.
+- Run the full test suite exactly once, at Step 2 close — never earlier in this skill, and after squash only when squash resolved conflicts (its Step 5 rule).
 - Detect the target branch by divergence in 4a — never assume `${AI_SKILLS_TARGET_BRANCH:-main}`.
 - Pass `--draft` and `--assignee @me` on every invocation; add `--reviewer` only when `$AI_SKILLS_REVIEWERS` is non-empty.
 - Extract a ticket before drafting; if one exists, prepend `Closes <TICKET>`.
