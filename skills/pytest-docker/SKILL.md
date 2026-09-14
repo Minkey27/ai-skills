@@ -92,6 +92,12 @@ squash). Not between tasks, not per commit: CI runs the suite on every push; the
 local run exists to catch a cross-cutting break before the MR round-trip, once.
 Failures → classify (below), fix yours, re-run once.
 
+Pass the Bash tool `timeout: 600000` — the suite takes 5–8 minutes and the
+default 2-minute timeout backgrounds it. **One run at a time**: the test DB is
+shared, so a second concurrent run corrupts both. "Is it still running?" is
+answered by `.test-output.txt` — a growing file or a progress line at the tail
+means yes, a tally line means no. Never by `ps`/`pgrep` in the container.
+
 ## Output handling
 
 Redirect to `.test-output.txt` (relative path — each worktree gets its own) and
@@ -99,12 +105,26 @@ end the command with `; echo "exit: $?"`. **The exit code is the verdict:** 0
 passed; 1 test failures; 2 usage; 3–5 collection/internal. Exit 0 never hides a
 failure.
 
+The `exit: <N>` line is printed to the **Bash result**, never into
+`.test-output.txt`. A run that outlives the Bash timeout is backgrounded by the
+harness ("Command running in background…"); its `exit:` line is then the last
+line of the task file the harness names, delivered with the completion
+notification — wait for that notification; do not poll, do not start another run.
+
 - `exit: 0` → done. No `grep`, `tail`, `wc` or `Read` to "really confirm" — a
   second verification command after a green exit is the spiral this rule exists
   to stop.
 - non-zero → `Grep` tool (never `Bash(grep …)`) on `.test-output.txt` with
   `^FAILED |^ERROR |^=+ .*(failed|error)` for the names, then `Read` for the
   tracebacks.
+- **No `exit:` line anywhere** (session restart, killed wrapper shell) → the
+  verdict is in the artifact, not in a re-run. The last line of
+  `.test-output.txt` is pytest's tally, `=== N passed[, M skipped] in Ns ===`:
+  no `failed`/`error` in it → green. Tally missing too (client cut off
+  mid-summary) but a `short test summary info` header present → every test
+  ran; zero `^FAILED |^ERROR ` lines → green, reported as "tally lost, verdict
+  from the summary section". Re-running to recover a number you can already
+  read is the same spiral.
 
 ## Failures
 
@@ -160,3 +180,4 @@ task → tell the dispatcher; it belongs in the testing docs as a baseline.
 - Never a directory as a Tier 1 target; never the full suite during implementation; never Tier 2 as a subagent.
 - Read the traceback you already have — no re-running with different flags to "investigate".
 - Never assume the base is green; never report a bare failure count.
+- Never start a test run while another may still be running; never re-run to recover a verdict the output already holds.
