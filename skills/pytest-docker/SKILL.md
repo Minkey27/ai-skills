@@ -25,14 +25,14 @@ Pytest outside Docker → install a plain-pytest skill instead.
 
 ## Subagents
 
-Every rule here applies to a subagent dispatched to run tests. Never run a raw
+Every rule here also applies to a subagent dispatched to run tests. Never run a raw
 `docker compose exec <service> pytest …` without loading this skill first (a
 `PreToolUse` hook may block the command until it is loaded). Report the
 `exit: <N>` line and, on non-zero, the failing test names — the dispatcher never
 sees `.test-output.txt`.
 
 **Implementation subagents run Tier 1 only.** Tier 2 belongs to the controller,
-once, at `finalize-branch`. When the dispatch prompt says "run the full suite
+once per plan or session — usually at `finalize-branch`. When the dispatch prompt says "run the full suite
 once before committing", that means the Tier 1 run, once — never `tests/`,
 `tests/unit`, `tests/integration`, or a whole context directory. If the blast
 radius truly needs the full suite, say so in your report; do not run it. The
@@ -85,17 +85,19 @@ cannot do that either → say so in the report and let the controller decide.
 - Changed a template → the route tests that render it (grep the template name under `tests/`)
 - In doubt → the integration files over the unit files; more ground per second
 
-## Tier 2 — full suite (once per branch)
+## Tier 2 — full suite (once per plan or session)
 
 ```bash
 docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/ -q -n 0 --tb=short > .test-output.txt 2>&1; echo "exit: $?"
 ```
 
-No `-x` — collect every failure. Runs **once per branch, by the controller, as
-the close of `finalize-branch` Step 2** (after the simplify commit, before
-squash). Not between tasks, not per commit: CI runs the suite on every push; the
-local run exists to catch a cross-cutting break before the MR round-trip, once.
-Failures → fix, re-run once.
+No `-x` — collect every failure. Runs **once per plan or session, by the
+controller**. The close of `finalize-branch` Step 2 (after the simplify commit,
+before squash) is the default moment, not the only permitted one — invoke it when
+a run is genuinely warranted. What is forbidden is starting a second run on your
+own initiative: CI runs the suite on every push, and the local run exists to
+catch a cross-cutting break before the MR round-trip. Failures → fix, re-run
+once.
 
 Pass the Bash tool `timeout: 600000` — the suite takes 5–8 minutes and the
 default 2-minute timeout backgrounds it. **One run at a time**: the test DB is
