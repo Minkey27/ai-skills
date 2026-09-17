@@ -280,7 +280,7 @@ Recommended → `**Default:** take`; Optional → `**Default:** skip`; Excluded 
 
 - Annotations anchor per block (paragraph, heading, list item); the `### F<n>` heading is the intended target. Map by the `F<n>` token in anchor text or body.
 - Vocabulary: `take`, `skip`, `fold into F<n>` — case-insensitive. `fold into F<n>` = covered by F*n*; don't post separately, record as folded.
-- Text outside the vocabulary (a question, "wrong line range") applies **nothing**. Answer it, re-open the write-up.
+- Text outside the vocabulary (a question, "wrong line range", a request for a new finding) applies **nothing**. Answer it, then re-gate on a **delta file** — `$GITDIR/mr-review-$SLUG-round<n>.md` holding only the new or changed blocks in full (metadata line, `**Default:**`, `---`) plus one line naming the untouched findings with their standing defaults. Never re-present the full write-up: the reader cannot tell what changed. Approve on the delta applies the standing defaults and the delta's own.
 - Can't map to exactly one finding → **ask**. Never guess, never fall back to the default.
 
 **Print an applied/skipped/folded receipt** naming every finding before posting — the last thing the user sees before notifications fire.
