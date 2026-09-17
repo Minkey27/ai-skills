@@ -75,52 +75,28 @@ git log $MERGE_BASE..HEAD --oneline
 git log $MERGE_BASE..HEAD --stat
 ```
 
-Categorize the branch type and present a grouping proposal to the user.
+**The recommended grouping is the one a reviewer reads fastest.** History is rewritten here for the reader of the MR, not the author — a commit is a unit of review, not a unit of work.
 
-### Feature branches
+### Build the recommendation
 
-Goal: logical, atomic commits without fixup noise.
+1. **Sort every change as mechanical or surgical.** Mechanical: a tool or a single rule produced it identically across files — formatter runs, renames, import-path sweeps, codemods, generated files, lockfiles. Surgical: a person decided each line — logic, behaviour-asserting tests, migrations, config that encodes a judgement. The stat is the tell: mechanical touches many files with a near-equal insert/delete count; surgical is uneven and small.
+2. **When the branch holds both, mechanical changes get their own commit, shared with nothing surgical.** Name the tool and command in the message (`style: reformat templates with djlint --reformat`) so the reviewer re-runs it instead of reading 500 files. A surgical fix the mechanical change forced (rendering broke under the new layout) is still surgical — its own commit, placed after the mechanical one it repairs.
+3. **Split the surgical set the way the reviewer reads it.** Pick one axis and hold it: by layer (domain → persistence → presentation → tests), by dependency (the commit each later one needs comes first), or by concern (one behaviour per commit). Each commit makes sense read alone, and its message says what to check.
+4. **Size: 2–5 commits is the working range.** One commit when the branch is a single surgical change readable in one pass. Above 7, the split has followed files instead of reviewable units — merge until it doesn't. Review-round fixups fold into the commit they correct; the reviewer never sees the version that was wrong.
 
-Look for patterns:
-- **Core implementation** commits (the actual feature)
-- **Fixup/correction** commits ("fix typo", "oops", "address review")
-- **Test** commits
-- **Migration/schema** commits
+### Present it
 
-Propose grouping like:
-1. `feat: add X` (core implementation, folding in fixups)
-2. `feat: add tests for X` (if tests are substantial enough to warrant a separate commit)
-3. `feat: add migration for X` (if migrations exist)
+Show the commit list, then the recommendation with the reviewer's reading path in one line per commit, then 1–2 alternatives — coarser or finer, and single-commit whenever it is not the recommendation. Options numbered, recommendation first.
 
-### Refactor branches
+The shape to match — a djlint rollout, one mechanical commit fenced off from the surgical ones around it:
 
-Goal: group by type of change, so each commit is a coherent, reviewable unit.
-
-Look for patterns:
-- **Rename/move** commits (same change across many files)
-- **Signature/interface** changes
-- **Implementation** changes
-- **Test updates** that mirror the above
-
-Propose grouping like:
-1. `refactor: rename FooService to BarService` (all rename changes)
-2. `refactor: extract X into separate module` (structural changes)
-3. `refactor: update tests for new structure`
-
-### When unsure
-
-Present the commit list and ask:
-
-> I see N commits on this branch. How would you like them grouped?
->
-> Here are the commits:
-> [list]
->
-> Options:
-> 1. **Single commit** — squash everything into one
-> 2. **By type** — group renames, implementation, tests, migrations separately
-> 3. **Logical units** — I'll propose a grouping based on what I see
-> 4. **Custom** — tell me how to group them
+```
+build(lint): make the djlint hook and CI step check files          4 files
+style(templates): reformat all templates with djlint             536 files  +39085/-38835   mechanical — re-run, don't read
+fix(templates): preserve rendering under djlint's layout          38 files                  surgical — repairs the reformat
+test(templates): assert on rendered markup, not line breaking     23 files                  surgical — tests, own commit
+fix(lint): stop djlint evaluating Jinja expressions               66 files                  surgical — config judgement
+```
 
 **Always wait for user confirmation before proceeding.**
 
@@ -224,6 +200,7 @@ GIT_EDITOR=/tmp/squash-msg-editor.sh git rebase --continue
 |---------|-----|
 | Forgetting to snapshot diff before squash | Always do Step 1 first — it's your undo safety net |
 | Squashing without asking user | Always present grouping proposal and wait for confirmation |
+| Recommending a single commit because `reset --soft` carries no conflict risk | Safety is Step 4's diff check, not the grouping. Recommend the split a reviewer reads fastest; the mechanics follow from the grouping, never the reverse |
 | Losing changes during reorder | The before/after diff check catches this — never skip it |
 | Skipping tests after a conflicted squash | Hand-resolved conflicts are the one place a squash can change behaviour — Step 5 runs the suite then, and only then; a conflict-free squash skips it on the strength of Step 4's clean diff-check |
 | Force-pushing without telling user | After squash, remind user the branch needs force-push and confirm before doing it |
