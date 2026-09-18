@@ -207,20 +207,20 @@ The file stands alone. In order:
    ```
    | # | file:line | author | verdict | proposed disposition | one-line fix summary |
    |---|-----------|--------|---------|----------------------|----------------------|
-   | [1](#1--dropdown-click-rewrites-user_roles-on-every-request) | service.py:62 | <user> | valid | Fix | resolve via repo, not transient |
-   | [2](#2--x-is-already-async) | routes.py:107 | <user> | invalid | Push back | reviewer misread; X is already async |
-   | [3](#3--which-format-is-meant) | (no anchor) | <user> | needs-clarification | Defer | ask which format is meant |
-   | [4](#4--semantic-token) | macros.html:14 | <user> | valid | Fix | use semantic token, not text-gray-500 |
-   | [5](#5--same-edit-as-4) | macros.html:14 | <other> | valid ↳ #4 | Fix | same edit as #4 |
+   | [1](#1fix---dropdown-click-rewrites-user_roles-on-every-request) | service.py:62 | <user> | valid | Fix | resolve via repo, not transient |
+   | [2](#2push-back---x-is-already-async) | routes.py:107 | <user> | invalid | Push back | reviewer misread; X is already async |
+   | [3](#3defer---which-format-is-meant) | (no anchor) | <user> | needs-clarification | Defer | ask which format is meant |
+   | [4](#4fix---semantic-token) | macros.html:14 | <user> | valid | Fix | use semantic token, not text-gray-500 |
+   | [5](#5fix---same-edit-as-4) | macros.html:14 | <other> | valid ↳ #4 | Fix | same edit as #4 |
    ```
 
-   A thread riding another's cluster verdict carries `↳ #<n>` after its verdict. Anchors assume GitHub-style slugs (lowercase, em-dash → double hyphen, spaces → hyphens); if plannotator slugifies differently the links just don't jump.
+   A thread riding another's cluster verdict carries `↳ #<n>` after its verdict. Anchors assume GitHub-style slugs (lowercase, brackets dropped, the ` - ` separator collapsing to three hyphens, spaces → hyphens); if plannotator slugifies differently the links just don't jump.
 
 4. **Cluster sections and thread blocks**:
 
 ```markdown
-### #1 — dropdown click rewrites user_roles on every request
-`valid` · `Fix` · `service.py:62` · `<user>` · verification **anchor drifted to :71**
+### #1[Fix] - dropdown click rewrites user_roles on every request
+`valid` · `service.py:62` · `<user>` · verification **anchor drifted to :71**
 
 **Problem.** <What the reviewer flagged and whether it is actually present. Mechanism
 only, capped at about 6 lines. Name the exact symbols and cite file:line inline as you
@@ -245,13 +245,13 @@ already obvious from the block.>
 
 **Rules:**
 
-- **Heading: `### #<n> — <headline>`.** ID plus headline only — outline entry, table link target, annotation anchor.
-- **One metadata line under the heading**, `·`-separated: verdict, proposed disposition, anchor as a code span, author, verification delta flag. No line → `(no anchor)`, matching the table.
+- **Heading: `### #<n>[<Disposition>] - <headline>`.** ID, proposed disposition, headline — nothing else. The tag is the display form (`[Fix]`, `[Push back]`, `[Dismiss]`, `[Defer]`), so the proposal is readable from the outline without opening the block. Outline entry, table link target, annotation anchor.
+- **One metadata line under the heading**, `·`-separated: verdict, anchor as a code span, author, verification delta flag. The disposition does not repeat here — the heading tag carries it. No line → `(no anchor)`, matching the table.
 - **Delta flag: 2–4 words** as `verification **<flag>**` — label plain, flag bold. Typical: verified as claimed, anchor drifted to :<line>, inverted the diagnosis, reviewer misread the call, could not verify; coin one when none fits.
 - **`**Problem.**` — mechanism only, ~6 lines**; **`**Why it bites.**` required and separate.** Run-on bold lead-ins, never colon-labelled one-liners, no `**Verification:**` badge line — verification is woven into the prose; the flag only indexes it. `inverted the diagnosis` carries both claim and correction, so ~8 lines; never meet the cap by dropping the correction. No runtime consequence → `**Why it bites.**` names who is misled and when.
 - **`**Default:**` is the last line** before the separator: the proposed disposition and the words that override it. The gate reads it. One disposition, three forms — don't swap them:
   - **annotation input** — lowercase text the user types: `fix`, `push back`, `dismiss`, `defer`. Match case-insensitively.
-  - **display** — metadata line and table, Title Case with a space: `Fix`, `Push back`, `Dismiss`, `Defer`.
+  - **display** — heading tag and table, Title Case with a space: `Fix`, `Push back`, `Dismiss`, `Defer`.
   - **frozen-map key** — single token: `Fix`, `PushBack`, `Dismiss`, `Defer`.
 
   Only `Push back` vs `PushBack` differs beyond case.
@@ -282,7 +282,7 @@ plannotator annotate "$(git rev-parse --absolute-git-dir)/mr-feedback-$(git rev-
 
 `annotated` mapping:
 
-- Annotations anchor per block (paragraph, heading, list item); the `### #<n>` heading is the intended target. Map by the `#<n>` token in anchor text or body.
+- Annotations anchor per block (paragraph, heading, list item); the `### #<n>[<Disposition>]` heading is the intended target. Map by the `#<n>` token in anchor text or body — the tag is not part of the ID, and an annotation may contradict it.
 - Vocabulary: `fix`, `push back`, `dismiss`, `defer` — case-insensitive; the map records `Fix | PushBack | Dismiss | Defer`. Any may override any other in either direction.
 - Text outside the vocabulary (a question, "the anchor is wrong") applies **nothing**. Answer it, re-open the write-up.
 - Can't map to exactly one thread → **ask**. Never guess, never fall back to the default.

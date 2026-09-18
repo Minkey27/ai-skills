@@ -231,12 +231,12 @@ The file stands alone. In order:
    ```
    | ID | Sev | Anchor | Real? | Fix sound? | Bucket |
    |----|-----|--------|-------|------------|--------|
-   | [F1](#f1--every-dropdown-click-rewrites-user_roles) | medium | service.py:62 | ✓ yes | ⚠ risky | Recommended |
-   | [F2](#f2--route-test-asserts-nothing) | medium | test_routes.py:107 | ✓ yes | ✓ yes | Recommended |
-   | [F3](#f3--stale-docstring) | low | (file-level) | ✓ yes | ✓ yes | Optional |
+   | [F1](#f1rec---every-dropdown-click-rewrites-user_roles) | medium | service.py:62 | ✓ yes | ⚠ risky | Recommended |
+   | [F2](#f2rec---route-test-asserts-nothing) | medium | test_routes.py:107 | ✓ yes | ✓ yes | Recommended |
+   | [F3](#f3skip---stale-docstring) | low | (file-level) | ✓ yes | ✓ yes | Optional |
    ```
 
-   Anchors assume GitHub-style slugs (lowercase, em-dash → double hyphen, spaces → hyphens). If plannotator slugifies differently the links just don't jump — navigation only.
+   Anchors assume GitHub-style slugs (lowercase, brackets dropped, the ` - ` separator collapsing to three hyphens, spaces → hyphens). If plannotator slugifies differently the links just don't jump — navigation only.
 
 5. **Cluster sections and finding blocks** — see [Finding write-up format](#finding-write-up-format).
 
@@ -255,17 +255,17 @@ plannotator annotate "$(git rev-parse --absolute-git-dir)/mr-review-$(git rev-pa
 
 **7b. Buckets** — exactly one per finding:
 
-| Bucket | Rule | Default it sets (fallback prompt) |
+| Bucket | Rule | Heading tag · default it sets (fallback prompt) |
 |---|---|---|
-| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND (severity ∈ {`critical`, `high`, `medium`} OR `**My read.**` is take at `low`/`nit` — e.g. the corrected diagnosis is materially useful) | `take` (fallback Prompt 1, "Confirm to post") |
-| **Optional** | every shown finding not Recommended — `low`/`nit` with a `skip` read, `fix_sound == risky`, or `fix_sound == no` on a real finding | `skip` (fallback Prompt 2, "Optional additions") |
+| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND (severity ∈ {`critical`, `high`, `medium`} OR `**My read.**` is take at `low`/`nit` — e.g. the corrected diagnosis is materially useful) | `[Rec]` · `take` (fallback Prompt 1, "Confirm to post") |
+| **Optional** | every shown finding not Recommended — `low`/`nit` with a `skip` read, `fix_sound == risky`, or `fix_sound == no` on a real finding | `[Skip]` · `skip` (fallback Prompt 2, "Optional additions") |
 | **Excluded** | `issue_real == no` (verified false positive), OR the sub-agent recommends declining | Not selectable. Listed in the `excluded, and why` lines. |
 
 > **Precedence:** `medium`+ with `fix_sound == risky` → **Optional**. A real issue with a caveated fix is not posted on the skill's recommendation; the user opts in with the caveat visible in `Fix sound?`.
 
 > **`partial` stays Recommended.** It usually means the bug is real but the reviewer's trigger diagnosis was wrong; the corrected diagnosis is what gets posted. Down-rating it would waste the verification.
 
-Recommended → `**Default:** take`; Optional → `**Default:** skip`; Excluded → no `**Default:**` line, not part of the decision surface.
+Recommended → heading tag `[Rec]` and `**Default:** take`; Optional → heading tag `[Skip]` and `**Default:** skip`; Excluded → no block, so no tag and no `**Default:**` line, not part of the decision surface.
 
 **7c. Read the gate's decision.**
 
@@ -278,7 +278,7 @@ Recommended → `**Default:** take`; Optional → `**Default:** skip`; Excluded 
 
 `annotated` mapping:
 
-- Annotations anchor per block (paragraph, heading, list item); the `### F<n>` heading is the intended target. Map by the `F<n>` token in anchor text or body.
+- Annotations anchor per block (paragraph, heading, list item); the `### F<n>[Rec|Skip]` heading is the intended target. Map by the `F<n>` token in anchor text or body — the tag is not part of the ID, and an annotation may contradict it.
 - Vocabulary: `take`, `skip`, `fold into F<n>` — case-insensitive. `fold into F<n>` = covered by F*n*; don't post separately, record as folded.
 - Text outside the vocabulary (a question, "wrong line range", a request for a new finding) applies **nothing**. Answer it, then re-gate on a **delta file** — `$GITDIR/mr-review-$SLUG-round<n>.md` holding only the new or changed blocks in full (metadata line, `**Default:**`, `---`) plus one line naming the untouched findings with their standing defaults. Never re-present the full write-up: the reader cannot tell what changed. Approve on the delta applies the standing defaults and the delta's own.
 - Can't map to exactly one finding → **ask**. Never guess, never fall back to the default.
@@ -365,8 +365,8 @@ Restate the **Excluded** findings with their one-line reasons. Every finding end
 The per-finding blocks in the write-up file (Step 7a). Not the diff-note body — that's the next section.
 
 ```markdown
-### F4 — applyAdjustFrame derefs state that can be nulled mid-POST
-`medium` · `Recommended` · `floorplan-editor.js:1543` · verification **verified as claimed**
+### F4[Rec] - applyAdjustFrame derefs state that can be nulled mid-POST
+`medium` · `floorplan-editor.js:1543` · verification **verified as claimed**
 
 **Problem.** `applyAdjustFrame` awaits the POST at line 1508. `adjustMode` stays `true`
 for that whole await, so anything that calls `cancelAdjust()` during it — Escape (2901),
@@ -393,9 +393,9 @@ catches it — the POST succeeded, so there is no failed request to notice.
 
 **Rules:**
 
-- **Heading: `### F<n> — <headline>`.** ID plus headline only — it is the outline entry, the table's link target, and the annotation anchor; a 120-character heading fails all three.
-- **One metadata line under the heading**, `·`-separated, in order: severity, bucket, anchor(s) as code spans, verification delta flag.
-  - Bucket is here because the reader needs it while reading, not only at the table.
+- **Heading: `### F<n>[Rec|Skip] - <headline>`.** ID, recommendation tag, headline — nothing else. The tag is the bucket from 7b: `[Rec]` for Recommended, `[Skip]` for Optional, so the call is readable from the outline without opening the block. The heading is also the table's link target and the annotation anchor; a 120-character headline fails all three jobs.
+- **One metadata line under the heading**, `·`-separated, in order: severity, anchor(s) as code spans, verification delta flag.
+  - Bucket does not repeat here — the heading tag carries it.
   - Anchors are code spans (`` `services.py:120` ``); chain with `→` when the fix spans two places. No line → `(file-level)` or the path it concerns, matching the table's Anchor column.
   - Delta flag: 2–4 words as `verification **<flag>**` — label plain, flag bold. Typical: verified as claimed, corrected the remedy, inverted the diagnosis, widened the line range, downgraded to partial; coin one when none fits.
 - **`**Problem.**` — mechanism only, ~6 lines**: trigger, sequence, resulting state, `file:line` cited inline. Quotes and code go to `**Fix.**`; provenance ("this branch hoisted it out") goes to `**My read.**`. `inverted the diagnosis` / `corrected the remedy` carry two mechanisms, so ~8 lines; never meet the cap by dropping the correction.
@@ -405,7 +405,7 @@ catches it — the POST succeeded, so there is no failed request to notice.
 - **No `**Verification:**` badge line.** Corrections are woven into the prose in your own voice ("Important correction to the original recommendation: …", "Verification downgraded this to partial: …"). The delta flag indexes that prose; it carries no reasoning. Full verdicts live in the table.
 - **`**My read.**` — one sentence**: take / skip / fold into F*n*, only when not obvious from the block. A second sentence only when it changes *handling* — outside the diff's hunks, or wider than this branch.
 - **`**Default:**` is the last line** before the separator: the disposition that applies on silence and the words that override it. Recommended → `take`; Optional → `skip`. The gate reads this.
-- **`**My read.**` and `**Default:**` agree** — take ⇔ Recommended. A `take` read at `low`/`nit` is the Recommended criterion for that severity (7b), so bucket it Recommended. A `take` read on a `risky` fix is the read being wrong — precedence keeps the bucket Optional, so the read becomes `skip` with the caveat named. When the two lines disagree at write time, one of them is wrong; fix it before the next block.
+- **Heading tag, `**My read.**` and `**Default:**` agree** — `[Rec]` ⇔ take ⇔ Recommended, `[Skip]` ⇔ skip ⇔ Optional. A `take` read at `low`/`nit` is the Recommended criterion for that severity (7b), so bucket it Recommended and tag it `[Rec]`. A `take` read on a `risky` fix is the read being wrong — precedence keeps the bucket Optional, so the read becomes `skip` with the caveat named. When the three disagree at write time, one of them is wrong; fix it before the next block.
 - **`---` between every finding**, including within a cluster.
 - **Cluster when findings share a mechanism**: `## Cluster A — <the mechanism>` plus one line on how they interact ("F1's write-back closes F6"). Every finding inside keeps its full block, metadata line, `**Default:**` and `---`.
 - **Overview table first** — after the counts and excluded lines, before the clusters; it covers every finding.
