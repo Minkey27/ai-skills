@@ -12,7 +12,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 IDLE_CAP_MINUTES = 15
@@ -123,10 +123,7 @@ def _norm(path):
 
 def in_scope(cwd, branch, repo_root, live_worktrees, known_branches):
     """True if a session record belongs to this repo (rules a/b/c)."""
-    cwd = _norm(cwd)
-    if cwd == _norm(repo_root):
-        return True
-    if cwd in {_norm(w) for w in live_worktrees}:
+    if under_any(cwd, [repo_root, *live_worktrees]):
         return True
     if branch and branch in known_branches:
         return True
@@ -149,6 +146,11 @@ _NOISE_PREFIXES = (
     "<system-reminder",
     "[Request interrupted",
     "<command-name>",
+    "<command-message>",
+    "<local-command-",
+    "<task-notification>",
+    "Another Claude session sent a message",
+    "`/",
 )
 
 
@@ -166,12 +168,36 @@ def _user_text(message):
 
 
 def _is_noise(text):
-    stripped = text.lstrip()
-    return any(stripped.startswith(prefix) for prefix in _NOISE_PREFIXES)
+    stripped = text.strip()
+    return len(stripped) < 3 or any(stripped.startswith(prefix) for prefix in _NOISE_PREFIXES)
 
 
 def _parse_ts(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def inherit_session_branch(events):
+    """Give branch-less events the session's dominant feature branch.
+
+    Subagent hand-backs record no `gitBranch`, and a rebase leaves `HEAD`; both
+    would otherwise split off into untitled rows. A `main` slice in a session
+    that mostly sat on a feature branch is that branch's work too. Sessions with
+    no feature branch at all are left untouched.
+    """
+    counts = {}
+    for event in events:
+        branch = event.get("branch")
+        if branch and branch.lower() not in GENERIC_BRANCHES:
+            counts[branch] = counts.get(branch, 0) + 1
+    if not counts:
+        return events
+    # ponytail: one dominant branch per session; a session that truly works two
+    # tickets keeps each feature-branch event as-is, only generic ones inherit.
+    dominant = max(counts, key=counts.get)
+    for event in events:
+        if (event.get("branch") or "").lower() in GENERIC_BRANCHES:
+            event["branch"] = dominant
+    return events
 
 
 def parse_session(lines):
@@ -207,7 +233,7 @@ def parse_session(lines):
         "session_id": session_id,
         "ai_title": ai_title,
         "cwd": cwd,
-        "events": events,
+        "events": inherit_session_branch(events),
         "prompts": prompts,
     }
 
@@ -226,6 +252,7 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
     subjects = {}
     unattributed = {}
     contributing_sessions = set()
+    all_timestamps = []  # every in-scope, in-window event, for the union estimate
     # Earliest-ever timestamp per subject key, in scope, regardless of window —
     # lets us tell "worked on again today" apart from "picked up today".
     first_seen = {}
@@ -245,6 +272,7 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
                 if not in_window:
                     continue
                 contributing_sessions.add(session.get("session_id"))
+                all_timestamps.append(ts)
                 agg = subjects.setdefault(key, {
                     "subject": label,
                     "ticket": key if is_ticket_key(key) else None,
@@ -289,6 +317,7 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
             "titles": sorted(agg["titles"]),
             "branches": sorted(agg["branches"]),
             "prompt_samples": agg["prompts"][:4],
+            "untitled": key.startswith("untitled:"),
             "commits": [],  # filled by main() via git enrichment
             "merged_commits": [],  # filled by main() via git enrichment
         }
@@ -310,6 +339,18 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
     subject_rows.sort(key=lambda row: row["active_min"], reverse=True)
     review_rows.sort(key=lambda row: row["active_min"], reverse=True)
 
+    def _sum(rows):
+        return {
+            "wallclock_min": round(sum(r["wallclock_min"] for r in rows), 1),
+            "active_min": round(sum(r["active_min"] for r in rows), 1),
+        }
+    untitled_rows = [r for r in subject_rows if r["untitled"]]
+    subtotals = {
+        "ticketed": _sum([r for r in subject_rows if r["ticket"]]),
+        "non_ticketed": _sum([r for r in subject_rows if not r["ticket"]]),
+        "untitled": {"count": len(untitled_rows), **_sum(untitled_rows)},
+    }
+
     unattributed_rows = []
     for bucket in unattributed.values():
         timeline = sorted(bucket["timestamps"])
@@ -329,12 +370,69 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
             "idle_cap_min": IDLE_CAP_MINUTES,
             "known_branch_count": len(known_branches),
             "sessions_counted": len(contributing_sessions),
-            "totals": {"wallclock_min": round(total_wall, 1), "active_min": round(total_active, 1)},
+            "totals": {
+                "wallclock_min": round(total_wall, 1),
+                "active_min": round(total_active, 1),
+                # Parallel worktree sessions are summed above; this merges them
+                # onto one timeline, so it is the real "hours at the keyboard".
+                "union_active_min": round(active_minutes(all_timestamps), 1),
+            },
+            "subtotals": subtotals,
             "unattributed": unattributed_rows,
             "reviews": review_rows,
         },
         "subjects": subject_rows,
     }
+
+
+def count_workdays(start_day, end_day):
+    """Number of Mon-Fri dates in the inclusive [start_day, end_day] range."""
+    days = (end_day - start_day).days + 1
+    return sum(1 for i in range(days) if (start_day + timedelta(days=i)).weekday() < 5)
+
+
+DAY_START = "09:00"
+
+
+def suggest_hours(rows, budget_hours, step=0.25):
+    """Split `budget_hours` across tickets by active-minute ratio, in `step` units.
+
+    Every ticketed row is its own entry; titled non-ticket rows fold into one
+    `non-ticketed` entry; untitled rows are left out (unknown work is assumed
+    to be spread like the known work). Largest-remainder rounding keeps the
+    entries summing exactly to the budget. Entries are laid out back to back
+    from DAY_START so each carries the `start` time to log it at.
+    """
+    shares, subjects = {}, {}
+    for row in rows:
+        if row.get("untitled"):
+            continue
+        label = row["ticket"] or "non-ticketed"
+        shares[label] = shares.get(label, 0.0) + row["active_min"]
+        subjects.setdefault(label, []).append(row["subject"])
+    total = sum(shares.values())
+    if total <= 0 or budget_hours <= 0:
+        return []
+    units = round(budget_hours / step)
+    exact = {label: minutes / total * units for label, minutes in shares.items()}
+    allotted = {label: int(value) for label, value in exact.items()}
+    leftover = units - sum(allotted.values())
+    for label in sorted(exact, key=lambda k: exact[k] - allotted[k], reverse=True)[:leftover]:
+        allotted[label] += 1
+    entries = []
+    clock = datetime.strptime(DAY_START, "%H:%M")
+    for label in sorted(shares, key=shares.get, reverse=True):
+        hours = allotted[label] * step
+        entries.append({
+            "ticket": None if label == "non-ticketed" else label,
+            "label": label,
+            "subjects": subjects[label],
+            "active_min": round(shares[label], 1),
+            "hours": hours,
+            "start": clock.strftime("%H:%M"),
+        })
+        clock += timedelta(hours=hours)
+    return entries
 
 
 def _git(repo_root, args):
@@ -440,6 +538,8 @@ def _enrich_commits(report, repo_root, start_utc, end_utc, author):
     for row in report["subjects"]:
         commits = []
         for branch in row["branches"]:
+            if branch.lower() in GENERIC_BRANCHES:
+                continue
             commits.extend(by_branch.get(branch, []))
         unique_sorted = sorted(set(commits))
         row["commits"] = unique_sorted[:8]
@@ -453,6 +553,8 @@ def main(argv=None):
     parser.add_argument("--ticket-prefix", default=None,
                         help="override AI_SKILLS_TICKET_PREFIX")
     parser.add_argument("--projects-root", default=str(Path.home() / ".claude" / "projects"))
+    parser.add_argument("--hours", type=float, default=None,
+                        help="hour budget to split across tickets (default 8 per weekday in window)")
     args = parser.parse_args(argv)
 
     ticket_prefix = args.ticket_prefix
@@ -487,6 +589,13 @@ def main(argv=None):
 
     if author:
         _enrich_commits(report, repo_root, *window, author)
+
+    workdays = count_workdays(window[0].astimezone(local_tz).date(),
+                              window[1].astimezone(local_tz).date())
+    budget = args.hours if args.hours is not None else 8.0 * workdays
+    report["meta"]["workdays"] = workdays
+    report["meta"]["hours_budget"] = budget
+    report["meta"]["suggested_hours"] = suggest_hours(report["subjects"], budget)
 
     print(json.dumps(report, indent=2))
     return 0

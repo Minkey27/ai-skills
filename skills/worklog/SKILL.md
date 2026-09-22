@@ -1,75 +1,93 @@
 ---
 name: worklog
-description: Reconstruct what you worked on in a time window from Claude Code session transcripts and git history, and render a timesheet-style table (Subject | Summary | Wallclock | Active estimate) to help log hours. Use when the user says "/worklog", "what did I work on today", "build my timesheet", "how long did I spend on X", "worklog for last week", or wants a per-subject breakdown of time spent. Reports time only — it does not post anywhere.
+description: Use when the user types /worklog, asks what they worked on today, yesterday or this week, wants a timesheet or an hour split per ticket, or asks how long they spent on a ticket. Reconstructs the answer from Claude Code session transcripts and the current repo's git history. Reports only; never posts anywhere.
 ---
 
 # worklog
 
-Turn Claude Code session timestamps + git history into a per-subject time table.
+A script does every time calculation and prints JSON. You render that JSON as
+the four blocks below and write the summary phrases. Never compute or adjust a
+number yourself. Never post the result anywhere; the chat output is the
+deliverable.
 
-## When to use
-Triggers: `/worklog`, "what did I work on (today|yesterday|this week)", "build my
-timesheet", "how much time did I spend on <ticket>".
+## Run
 
-## How it works
-A deterministic script does the time math; you turn its JSON into the table and
-write the human summary. Never compute hours yourself — always run the script.
+```bash
+python3 ~/.claude/skills/worklog/scripts/worklog.py [WINDOW] [--hours N]
+```
 
-## Steps
+Run it from the repo root. `WINDOW`: omit for today, `YYYY-MM-DD` for one day,
+`YYYY-MM-DD..YYYY-MM-DD` for a range. `--hours N` replaces the default budget of
+8h per weekday (half day, weekend). Ticket labels use `AI_SKILLS_TICKET_PREFIX`.
 
-1. **Resolve the window** from the user's request:
-   - none / "today" → omit the argument
-   - "yesterday" / a specific day → `YYYY-MM-DD`
-   - "this week" / a range → `YYYY-MM-DD..YYYY-MM-DD` (compute the dates)
+- Window is today and `meta.totals.active_min` < 15 → rerun for yesterday and
+  say so in one line.
+- `subjects` is empty → say so, echo `meta.window` and `meta.repo_root`, stop.
 
-2. **Run the script from the current repo root** (it derives the repo, author,
-   and known branches from git):
-   ```bash
-   python3 ~/.claude/skills/worklog/scripts/worklog.py [WINDOW]
-   ```
-   It reads `AI_SKILLS_TICKET_PREFIX` from the environment for ticket labeling.
+## Render
 
-3. **Render a markdown table** from the JSON `subjects` (already sorted by active
-   time, descending). Columns: **Subject | Summary | Wallclock | Active estimate**.
-   - Format minutes as `Xh Ym` (e.g. `85.0` → `1h 25m`; `0` → `0m`).
-   - **Summary**: write one short phrase per subject from its `titles` +
-     `prompt_samples` (intent) and `commits` (outcome). Prefer the concrete
-     outcome when commits exist.
-   - Add a **Totals** row from `meta.totals`.
+Rows are `subjects`, already sorted by active time. Minutes print as `Xh Ym`, fraction
+dropped (`85.0` → `1h 25m`, `0.2` → `0m`). Each row gets one **summary phrase**: from
+`commits` when present (the outcome), else from `titles` and `prompt_samples`
+(the intent). Merge two rows only when they are plainly one task, and say so.
 
-3a. **Picked up / Finished, when the user wants a per-day narrative** (e.g. for a
-   worklog doc entry, not just the timesheet table). Derive these directly from
-   `subjects` — do not re-derive them from prompts or guess:
-   - **Picked up today**: rows where `started_in_window` is `true` — the ticket's
-     very first session (across all history, not just this window) falls inside
-     the requested window. A ticket worked on again today after earlier days is
-     *not* "picked up" — only its first-ever touch counts.
-   - **Finished / merged today**: rows where `merged_commits` is non-empty — a
-     `Merge branch '...'` commit landed in this window. A ticket can have local
-     commits (`commits`) without being merged; only `merged_commits` means done.
-   - Render each as a short bullet list: ticket + a few words from `subject`/
-     `titles` (Picked up), or ticket + the merge commit's branch/subject
-     (Finished/Merged). Omit either list if empty — don't print "none".
-   - **Reviews** live in `meta.reviews`, not `subjects` — a branch the user
-     only checked out to review (no commit authored by them on it) never counts
-     as "picked up" or own work, and is excluded from `subjects` and `totals`.
-     If the user wants review time surfaced, list `meta.reviews` under a
-     separate **Reviews** heading (same columns) and keep it out of the totals.
+### Time table
 
-4. **Merge** rows that are obviously the same task — e.g. a `main`/title row that
-   is plainly the same work as a ticket row worked later. State any merge you make.
+```
+| Subject | Summary | Wallclock | Active estimate |
+|---|---|---|---|
+| **Ticketed** | | | |
+| BPZ-1405 as_of-callers | Callers that omit as_of on temporal repos | 5h 57m | 4h 10m |
+| *Subtotal* | | 5h 57m | 4h 10m |
+| **Non-ticketed** | | | |
+| fix temporal hard deletes | Temporal delete audit | 1h 8m | 1h 8m |
+| Unlabeled sessions (2) | | 3m | 3m |
+| *Subtotal* | | 1h 11m | 1h 11m |
+| **Total** | | 7h 8m | 5h 21m |
+```
 
-5. **Flag anomalies** beneath the table:
-   - any row where `active_min > wallclock_min` (a bug — report it, don't hide it)
-   - a row with large `wallclock_min` but tiny `active_min` (session left open)
-   - `main (untitled …)` rows — ask the user to label them
-   - collapse or footnote `0m` single-event rows (often subagent sessions) so they
-     don't clutter the table
-   - if `meta.unattributed` is non-empty, list those branches/spans and tell the
-     user they were **not** counted (unknown branch) so they can add them by hand.
+Ticketed = rows with a `ticket`. All `untitled: true` rows collapse into the one
+`Unlabeled sessions (N)` row, from `meta.subtotals.untitled`. Subtotals come
+from `meta.subtotals`, the total from `meta.totals`. Under the table:
+`At the keyboard: Xh Ym` from `meta.totals.union_active_min`; when it is below
+the total, add "(the total sums parallel worktree sessions)".
 
-6. If `subjects` is empty, say so and echo `meta.window` and `meta.repo_root`.
+### Four lists
 
-## Hard rules
-- Do not invent or adjust the numbers; render exactly what the script returns.
-- Do not post anywhere (no ClickUp). Output is the chat table only.
+Four headings, `## Picked up`, `## Worked on`, `## Merged`, `## Reviews`, always
+all four, in this order. One bullet shape:
+`- **BPZ-1234** slug: summary (Xh Ym)`; a non-ticket row puts its subject where
+the ticket goes. Skip `untitled` and `0m` rows. Empty list → `- none`.
+
+- Picked up: `started_in_window` true.
+- Worked on: `started_in_window` false and `merged_commits` empty.
+- Merged: `merged_commits` non-empty; name the merged branch. Local `commits`
+  alone are not a merge.
+- Reviews: rows of `meta.reviews`. Never in the other lists or totals.
+
+### Suggested hours
+
+One row per `meta.suggested_hours` entry, in the script's order:
+
+```
+| Time  | Task                                                       | Hours |
+|-------|------------------------------------------------------------|-------|
+| 09:00 | BPZ-1405 Callers that omit as_of on temporal repos         | 1.75  |
+| 10:45 | BPZ-1304 djlint gates and README hook table                | 1     |
+| 11:45 | Generic werkvoorbereiding "temporal delete audit, tooling" | 0.5   |
+```
+
+`Time` is `start`; `Task` is the ticket plus that row's summary phrase. The
+entry with `ticket: null` renders as `Generic werkvoorbereiding "<comment>"`,
+comment built from its `subjects`. Entries with `hours` 0 leave the table and
+go beneath it as `under 15m: …`. `meta.workdays` > 1 → drop the `Time` column.
+`meta.hours_budget` is 0 → say it is a weekend and point at `--hours`. Leave is
+never derivable; do not invent it.
+
+### Flags
+
+- A row with `active_min > wallclock_min`: script bug, report it.
+- Large `wallclock_min`, tiny `active_min`: session left open.
+- Remaining `untitled` rows: ask the user to label them.
+- `meta.unattributed` non-empty: list branch and span, say they were **not**
+  counted.
