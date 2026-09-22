@@ -172,13 +172,13 @@ The file stands alone. In order:
 
 1. **Meta block** — branch, commit range, file/line counts, ticket reference when the branch or commits carry one.
 2. **One-line count by severity**, then the `dropped, and why` line naming every verified false positive (`issue_real == no`) with a few-word reason — not decision options, listed so the user knows they were considered.
-3. **Overview table** — the scan layer and index. `ID` links to the finding's anchor.
+3. **Overview table** — the scan layer and index. `ID` links to the finding's anchor. `Headline` repeats the heading's headline verbatim, so a row is readable without opening the block.
 
    ```
-   | ID | Sev | Anchor | Real? | Fix sound? | Bucket |
-   |----|-----|--------|-------|------------|--------|
-   | [F1](#f1rec---duplicate-afdeling-enum) | medium | services.py:120 | ✓ yes | ✓ yes | Recommended |
-   | [F2](#f2skip---stale-cache-key) | low | (file-level) | ✓ yes | ⚠ risky | Optional |
+   | ID | Headline | Sev | Anchor | Real? | Fix sound? | Bucket |
+   |----|----------|-----|--------|-------|------------|--------|
+   | [F1](#f1rec---duplicate-afdeling-enum) | duplicate Afdeling enum | medium | services.py:120 | ✓ yes | ✓ yes | Recommended |
+   | [F2](#f2skip---stale-cache-key) | stale cache key | low | (file-level) | ✓ yes | ⚠ risky | Optional |
    ```
 
    Anchors assume GitHub-style slugs (lowercase, brackets dropped, the ` - ` separator collapsing to three hyphens, spaces → hyphens). If plannotator slugifies differently the links just don't jump — navigation only.

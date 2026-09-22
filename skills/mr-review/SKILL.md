@@ -226,14 +226,14 @@ The file stands alone. In order:
 1. **Meta block** — MR title and number, commit range, file/line counts, ticket + confidence.
 2. **One-line count by severity**, then `excluded, and why` lines for every **Excluded** finding — not selectable, listed so nothing is silently dropped.
 3. **Discrepancy report** (Step 4) — the verdict on the MR as a whole; it calibrates trust in the table, so it precedes it. **Heading: `## Discrepancy report — <verdict>`**, the verdict from Step 4 — `## Discrepancy report — ⚠ needs attention`, `## Discrepancy report — ✓ matches (ticket unavailable)`. The heading is what a reader scanning the file sees; a mismatch buried in prose under a neutral heading gets skipped. Flags as bullets under it; `✓ matches` gets one line naming what was compared.
-4. **Overview table** — the scan layer and index. `ID` links to the finding's anchor.
+4. **Overview table** — the scan layer and index. `ID` links to the finding's anchor. `Headline` repeats the heading's headline verbatim, so a row is readable without opening the block.
 
    ```
-   | ID | Sev | Anchor | Real? | Fix sound? | Bucket |
-   |----|-----|--------|-------|------------|--------|
-   | [F1](#f1rec---every-dropdown-click-rewrites-user_roles) | medium | service.py:62 | ✓ yes | ⚠ risky | Recommended |
-   | [F2](#f2rec---route-test-asserts-nothing) | medium | test_routes.py:107 | ✓ yes | ✓ yes | Recommended |
-   | [F3](#f3skip---stale-docstring) | low | (file-level) | ✓ yes | ✓ yes | Optional |
+   | ID | Headline | Sev | Anchor | Real? | Fix sound? | Bucket |
+   |----|----------|-----|--------|-------|------------|--------|
+   | [F1](#f1rec---every-dropdown-click-rewrites-user_roles) | every dropdown click rewrites user_roles | medium | service.py:62 | ✓ yes | ⚠ risky | Recommended |
+   | [F2](#f2rec---route-test-asserts-nothing) | route test asserts nothing | medium | test_routes.py:107 | ✓ yes | ✓ yes | Recommended |
+   | [F3](#f3skip---stale-docstring) | stale docstring | low | (file-level) | ✓ yes | ✓ yes | Optional |
    ```
 
    Anchors assume GitHub-style slugs (lowercase, brackets dropped, the ` - ` separator collapsing to three hyphens, spaces → hyphens). If plannotator slugifies differently the links just don't jump — navigation only.
