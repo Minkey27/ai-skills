@@ -205,13 +205,13 @@ The file stands alone. In order:
 3. **Overview table** — the scan layer and index. `#` links to the thread's anchor; `headline` repeats the block heading's headline verbatim, so a row reads as problem then fix without opening the block.
 
    ```
-   | # | headline | file:line | author | verdict | proposed disposition | one-line fix summary |
-   |---|----------|-----------|--------|---------|----------------------|----------------------|
-   | [1](#1fix---dropdown-click-rewrites-user_roles-on-every-request) | dropdown click rewrites user_roles on every request | service.py:62 | <user> | valid | Fix | resolve via repo, not transient |
-   | [2](#2push-back---handler-blocks-the-event-loop) | handler blocks the event loop | routes.py:107 | <user> | invalid | Push back | reviewer misread; handler is already async |
-   | [3](#3defer---export-format-unspecified) | export format unspecified | (no anchor) | <user> | needs-clarification | Defer | ask which format is meant |
-   | [4](#4fix---hard-coded-text-gray-500-in-macro) | hard-coded text-gray-500 in macro | macros.html:14 | <user> | valid | Fix | use semantic token, not text-gray-500 |
-   | [5](#5fix---hard-coded-gray-in-macro-duplicate-of-4) | hard-coded gray in macro, duplicate of #4 | macros.html:14 | <other> | valid ↳ #4 | Fix | same edit as #4 |
+   | # | headline | file:line | verdict | proposed disposition | one-line fix summary |
+   |---|----------|-----------|---------|----------------------|----------------------|
+   | [1](#1fix---dropdown-click-rewrites-user_roles-on-every-request) | dropdown click rewrites user_roles on every request | service.py:62 | valid | Fix | resolve via repo, not transient |
+   | [2](#2push-back---handler-blocks-the-event-loop) | handler blocks the event loop | routes.py:107 | invalid | Push back | reviewer misread; handler is already async |
+   | [3](#3defer---export-format-unspecified) | export format unspecified | (no anchor) | needs-clarification | Defer | ask which format is meant |
+   | [4](#4fix---hard-coded-text-gray-500-in-macro) | hard-coded text-gray-500 in macro | macros.html:14 | valid | Fix | use semantic token, not text-gray-500 |
+   | [5](#5fix---hard-coded-gray-in-macro-duplicate-of-4) | hard-coded gray in macro, duplicate of #4 | macros.html:14 | valid ↳ #4 | Fix | same edit as #4 |
    ```
 
    A thread riding another's cluster verdict carries `↳ #<n>` after its verdict. Anchors assume GitHub-style slugs (lowercase, brackets dropped, the ` - ` separator collapsing to three hyphens, spaces → hyphens); if plannotator slugifies differently the links just don't jump.
