@@ -22,7 +22,7 @@ One optional argument — the literal text after `/finalize-branch`.
 
 Match case-insensitively against `^(yolo|--yolo|auto|-y)$`. Anything else → ask what was meant.
 
-**Yolo does not change:** pre-flight checks; Step 1's verification fan-out and curation gate; the `squash` sub-skill's own confirmation and diff-verification.
+**Yolo does not change:** pre-flight checks; Step 1's verification fan-out and curation gate; the `squash` sub-skill's diff-verification and base-branch question.
 
 ## Config
 
@@ -77,7 +77,7 @@ digraph finalize {
     simplify [label="Step 2: Simplify\n(auto-applies in yolo)"];
     suite [label="Step 2 close: full test suite\n(project test-runner skill)"];
     gate2 [label="User confirms\n(skipped in yolo)" shape=diamond];
-    squash [label="Step 3: Squash\n(squash skill has its own gates)"];
+    squash [label="Step 3: Squash\n(yolo: takes squash's recommended grouping)"];
     gate3 [label="User confirms\n(skipped in yolo)" shape=diamond];
     mr [label="Step 4: Create MR"];
     done [label="Done" shape=doublecircle];
@@ -272,9 +272,9 @@ on the branch is the branch's own. In yolo the run still happens — only the ga
 
 **REQUIRED SUB-SKILL:** `squash`
 
-Its internal gates (grouping confirmation, diff-verification) are safety, not approval — this skill never overrides them, yolo included. Silencing them is a change to `squash` itself. Its Step 5 test run fires only after a squash with hand-resolved conflicts; otherwise the Step 2-close run stands and the squash report says so.
+**Gated:** invoke `squash` plainly — it presents its grouping and waits. **Yolo:** invoke `squash yolo` — it prints the recommendation and executes it without waiting. Its diff-verification and base-branch question are safety, not approval: never overridden, yolo included. Its Step 5 test run fires only after a squash with hand-resolved conflicts; otherwise the Step 2-close run stands and the squash report says so.
 
-**Gated:** after squash, **GATE** before Step 4. **Yolo:** after squash (including its own confirmation), proceed to Step 4 in the same turn.
+**Gated:** after squash, **GATE** before Step 4. **Yolo:** proceed to Step 4 in the same turn.
 
 ### Step 4: Create MR
 

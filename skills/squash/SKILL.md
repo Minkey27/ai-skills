@@ -1,6 +1,6 @@
 ---
 name: squash
-description: Use when the current branch has messy or fixup commits that need to be reorganized into clean logical commits before merging or creating a PR
+description: Use when the current branch has messy or fixup commits that need to be reorganized into clean logical commits before merging or creating a PR. Pass `yolo` to take the recommended grouping without waiting for confirmation.
 ---
 
 # Squash Branch Commits
@@ -10,6 +10,10 @@ description: Use when the current branch has messy or fixup commits that need to
 Interactive-rebase the current branch's commits on its merge-base, grouping them into clean, logical commits. Verify no changes are lost by diffing before and after.
 
 **Core principle:** Ask first, squash second, verify always.
+
+## Arguments
+
+One optional argument: `yolo`. It removes exactly one prompt — the Step 2 grouping confirmation, which becomes the recommendation. Step 0's base-branch question and Step 4's diff-verification are unchanged.
 
 ## Pre-flight Checks
 
@@ -98,7 +102,7 @@ test(templates): assert on rendered markup, not line breaking     23 files      
 fix(lint): stop djlint evaluating Jinja expressions               66 files                  surgical — config judgement
 ```
 
-**Always wait for user confirmation before proceeding.**
+**Wait for user confirmation before proceeding.** In yolo: still print the list and the recommendation so the user can read what happened, then take option 1 in the same turn.
 
 ## Step 3: Execute the Squash
 
@@ -192,14 +196,14 @@ GIT_EDITOR=/tmp/squash-msg-editor.sh git rebase --continue
 - `diff` output between before/after is non-empty — changes were lost
 - Rebase conflict during squash — resolve carefully using `PRE_SQUASH_REF`, re-verify diff
 - Tests fail after squash — investigate before proceeding
-- User hasn't confirmed grouping — never squash without approval
+- User hasn't confirmed grouping — never squash without approval (in yolo, the argument is the approval, and only for the recommended grouping)
 
 ## Common Mistakes
 
 | Mistake | Fix |
 |---------|-----|
 | Forgetting to snapshot diff before squash | Always do Step 1 first — it's your undo safety net |
-| Squashing without asking user | Always present grouping proposal and wait for confirmation |
+| Squashing without asking user | Always present the grouping proposal; wait for confirmation unless `yolo`, which takes the recommendation only |
 | Recommending a single commit because `reset --soft` carries no conflict risk | Safety is Step 4's diff check, not the grouping. Recommend the split a reviewer reads fastest; the mechanics follow from the grouping, never the reverse |
 | Losing changes during reorder | The before/after diff check catches this — never skip it |
 | Skipping tests after a conflicted squash | Hand-resolved conflicts are the one place a squash can change behaviour — Step 5 runs the suite then, and only then; a conflict-free squash skips it on the strength of Step 4's clean diff-check |
