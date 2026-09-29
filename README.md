@@ -109,6 +109,20 @@ ln -s "$PWD/iterm2/cc-status-tool" ~/.config/iterm2/cc-status-tool
 
 In `settings.json`, point the `UserPromptSubmit`, `PreToolUse` and `PostToolUse` entries at `~/.config/iterm2/cc-status-tool`. The other events stay on `cc-status`. Give the `Notification` entry `"matcher": "permission_prompt"`: the `idle_prompt` notification arrives a minute after each turn and blanks the reply preview, and `Stop` already covers everything it would show. It needs `jq`.
 
+### Session title
+
+Claude Code only titles a session from its first message, and skips that message when it is a slash command. A session opened with `/mr-review` therefore stays "Claude Code" in the terminal title and in `/resume`. `hooks/session-title.sh` titles those from the command and the git branch, such as `mr-review · feature-x`. It leaves plain-text sessions to Claude Code's own title, and never replaces a `/rename`.
+
+```sh
+ln -s "$PWD/hooks/session-title.sh" ~/.claude/hooks/session-title.sh
+```
+
+```json
+"UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/session-title.sh", "timeout": 5 }] }]
+```
+
+It needs `jq`.
+
 ## Uninstall
 
 Symlinks only — safe to delete directly:
