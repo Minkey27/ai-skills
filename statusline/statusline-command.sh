@@ -2,6 +2,10 @@
 # Claude Code status line script
 input=$(cat)
 
+# Read-only git: `status` and `diff` would otherwise take index.lock to refresh
+# the stat cache, which races any git write running in the same worktree.
+export GIT_OPTIONAL_LOCKS=0
+
 # --- Directory ---
 dir=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // ""')
 project=$(basename "$dir")
