@@ -1,0 +1,7 @@
+#!/bin/bash
+# iTerm2's cc-status, plus the current tool as the detail line while Claude works.
+in=$(cat)
+printf '%s' "$in" | ~/.config/iterm2/cc-status
+detail=$(jq -r '[.tool_name, (.tool_input.description // (.tool_input.file_path // "" | split("/") | last))] | map(select(length > 0)) | join(" · ")' <<<"$in")
+/Applications/iTerm.app/Contents/Resources/utilities/it2 set-status \
+  -s "${ITERM_SESSION_ID#*:}" --detail "$detail" >/dev/null

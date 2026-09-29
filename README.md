@@ -97,6 +97,18 @@ ln -s "$PWD/statusline/statusline-command.sh" ~/.claude/statusline-command.sh
 
 It needs `jq`. The `🧭` skill label only shows when a hook writes `~/.claude/state/active-skill/<session_id>`; without one that part stays empty.
 
+### iTerm2 session status
+
+iTerm2's Session Status panel shows each Claude Code session as idle, working or waiting. Its own `cc-status` hook fills the detail line with the last reply when a turn ends, but leaves it blank while Claude works. `iterm2/cc-status-tool` wraps `cc-status` and adds the current tool there, such as `Bash · List files` or `Edit · app.py`.
+
+It builds on iTerm2's Claude Code integration, so set that up first: it links `~/.config/iterm2/cc-status` and wires it into the hook events in `~/.claude/settings.json`. Then link the wrapper in:
+
+```sh
+ln -s "$PWD/iterm2/cc-status-tool" ~/.config/iterm2/cc-status-tool
+```
+
+In `settings.json`, change only the `PreToolUse` entry's command from `~/.config/iterm2/cc-status` to `~/.config/iterm2/cc-status-tool`. The other events stay on `cc-status`, which keeps the reply preview at idle. It needs `jq`.
+
 ## Uninstall
 
 Symlinks only — safe to delete directly:
