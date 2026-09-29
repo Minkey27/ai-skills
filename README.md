@@ -52,7 +52,7 @@ Common values to set:
 | Skill | Needs config? | What it needs |
 |---|---|---|
 | `branch-test-review` | No | `git` + Python stdlib only |
-| `squash` | No | Generic git operations |
+| `squash` | Optional | `AI_SKILLS_TARGET_BRANCH` names the default branch, falling back to `origin/HEAD`, then `main`; otherwise generic git operations |
 | `finalize-branch` | Optional | `AI_SKILLS_MR_TOOL`, `AI_SKILLS_REVIEWERS`, `AI_SKILLS_TARGET_BRANCH`, `AI_SKILLS_TICKET_PREFIX`. Uses a tracker MCP (ClickUp/Jira/Linear) for ticket intent if one is installed, otherwise skips that lookup. Uses [plannotator](https://plannotator.ai) for finding curation when the `plannotator` binary is on `PATH`; falls back to numbered terminal prompts when it is not. |
 | `handoff` | No | `git` + a writable OS temp dir (`$TMPDIR`, falling back to `/tmp`) |
 | `mr-review` | Required | `AI_SKILLS_MR_TOOL=glab` (GitLab-only); `AI_SKILLS_TICKET_PREFIX` is optional. Skill also leverages a tracker MCP (ClickUp/Jira/Linear) if one is installed, otherwise skips the ticket step. Uses [plannotator](https://plannotator.ai) for finding curation when the `plannotator` binary is on `PATH`; falls back to numbered terminal prompts when it is not. |
