@@ -99,7 +99,7 @@ It needs `jq`. The `🧭` skill label only shows when a hook writes `~/.claude/s
 
 ### iTerm2 session status
 
-iTerm2's Session Status panel shows each Claude Code session as idle, working or waiting. Its own `cc-status` hook fills the detail line with the last reply when a turn ends, but leaves it blank while Claude works. `iterm2/cc-status-tool` wraps `cc-status` and adds the current tool there, such as `Bash · List files` or `Edit · app.py`.
+iTerm2's Session Status panel shows each Claude Code session as idle, working or waiting. Its own `cc-status` hook fills the detail line with the last reply when a turn ends, but blanks it while Claude works. `iterm2/cc-status-tool` wraps `cc-status` and writes the prompt there, then the latest tool, such as `Bash · List files` or `Edit · app.py`. The tool stays up between tool calls, so a long think still shows what came last.
 
 It builds on iTerm2's Claude Code integration, so set that up first: it links `~/.config/iterm2/cc-status` and wires it into the hook events in `~/.claude/settings.json`. Then link the wrapper in:
 
@@ -107,7 +107,7 @@ It builds on iTerm2's Claude Code integration, so set that up first: it links `~
 ln -s "$PWD/iterm2/cc-status-tool" ~/.config/iterm2/cc-status-tool
 ```
 
-In `settings.json`, change only the `PreToolUse` entry's command from `~/.config/iterm2/cc-status` to `~/.config/iterm2/cc-status-tool`. The other events stay on `cc-status`, which keeps the reply preview at idle. It needs `jq`.
+In `settings.json`, point the `UserPromptSubmit`, `PreToolUse` and `PostToolUse` entries at `~/.config/iterm2/cc-status-tool`. The other events stay on `cc-status`. Give the `Notification` entry `"matcher": "permission_prompt"`: the `idle_prompt` notification arrives a minute after each turn and blanks the reply preview, and `Stop` already covers everything it would show. It needs `jq`.
 
 ## Uninstall
 
