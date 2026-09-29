@@ -1,7 +1,15 @@
 #!/bin/bash
-# iTerm2's cc-status, plus the prompt or the latest tool as the detail line while Claude works.
+# iTerm2's cc-status, plus the detail line: the prompt or the latest tool while Claude works,
+# the session title once it stops.
 in=$(cat)
 printf '%s' "$in" | ~/.config/iterm2/cc-status
-detail=$(jq -r '.prompt // ([.tool_name, (.tool_input.description // (.tool_input.file_path // "" | split("/") | last))] | map(select(length > 0)) | join(" · ")) | split("\n")[0] // ""' <<<"$in")
+if [ "$(jq -r .hook_event_name <<<"$in")" = Stop ]; then
+  detail=$(grep -h -E '"type":"(custom|ai)-title"' "$(jq -r .transcript_path <<<"$in")" 2>/dev/null |
+    jq -rs '(map(select(.type == "custom-title")) | last | .customTitle) // (map(select(.type == "ai-title")) | last | .aiTitle) // empty')
+  # No title yet: keep the reply preview cc-status just wrote.
+  [ -n "$detail" ] || exit 0
+else
+  detail=$(jq -r '.prompt // ([.tool_name, (.tool_input.description // (.tool_input.file_path // "" | split("/") | last))] | map(select(length > 0)) | join(" · ")) | split("\n")[0] // ""' <<<"$in")
+fi
 /Applications/iTerm.app/Contents/Resources/utilities/it2 set-status \
   -s "${ITERM_SESSION_ID#*:}" --detail "$detail" >/dev/null
