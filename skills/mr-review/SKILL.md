@@ -306,6 +306,8 @@ Order by severity. Never mix buckets. No reply → stop; don't post.
 
 ### 8. Post the selected findings
 
+**Post through the `posting-mr-notes` skill** when it is installed: batch JSON, dry run, then **end the turn** on `Reply "post" to send N notes to MR !<iid>.` and post only after that reply. The gate's `approved` chooses the notes but does not authorize the post: it arrives in a background-task notification that tells the auto-mode classifier it is not user input, so posting on it alone gets denied.
+
 **`--dry-run`**: skip the POSTs; print each payload as the receipt so the user can check anchors and body text, prefixed `[DRY-RUN] Would post 8 notes to MR !<iid>`.
 
 Otherwise POST one discussion per finding — GitLab has no batch endpoint. Prefer one Python helper that loops and captures `discussion_id` + `note_id` per response over many parallel `Bash` calls; sequential is easier to debug when a payload is rejected, and the latency is negligible.
