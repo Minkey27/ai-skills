@@ -83,6 +83,20 @@ This symlinks every skill in `skills/` into `~/.claude/skills/`. Existing entrie
 ln -s "$PWD/skills/<name>" ~/.claude/skills/<name>
 ```
 
+### Status line
+
+`statusline/statusline-command.sh` is my Claude Code status line. It prints three rows, because Claude Code truncates a wide status line instead of wrapping it. Link it in and point `settings.json` at the link:
+
+```sh
+ln -s "$PWD/statusline/statusline-command.sh" ~/.claude/statusline-command.sh
+```
+
+```json
+"statusLine": { "type": "command", "command": "bash ~/.claude/statusline-command.sh" }
+```
+
+It needs `jq`. The `🧭` skill label only shows when a hook writes `~/.claude/state/active-skill/<session_id>`; without one that part stays empty.
+
 ## Uninstall
 
 Symlinks only — safe to delete directly:
