@@ -61,6 +61,7 @@ The `--fork-point` override covers a parent that was force-pushed after this bra
 
 Never score by containment instead (every branch whose tip is an ancestor of HEAD). Every branch already merged into the default passes that test, so a long-lived repository lists hundreds of candidates, the "closest" one only measures how recently it was merged, and the default itself drops out as soon as its tip moves past HEAD's fork point. A merged branch's tip sits at or behind the default's merge-base, so divergence scoring ranks it no better than the default, and the tie goes to the default.
 
+- Current branch is `epic/*`: use the default, whatever the nearest. Say nothing. An epic is cut from the default branch, and a story cut from the epic shares its history exactly as a parent would, so that story scores as the nearest.
 - Nearest is the default, local or `origin/`, or there is no candidate at all: use the default. Say nothing.
 - Nearest differs: **ask the user**, quoting both candidates and their counts. `yolo` does not skip this question.
 
