@@ -104,10 +104,11 @@ iTerm2's Session Status panel shows each Claude Code session as idle, working or
 It builds on iTerm2's Claude Code integration, so set that up first: it links `~/.config/iterm2/cc-status` and wires it into the hook events in `~/.claude/settings.json`. Then link the wrapper in:
 
 ```sh
-ln -s "$PWD/iterm2/cc-status-tool" ~/.config/iterm2/cc-status-tool
+mkdir -p ~/.config/iterm2/with-detail
+ln -s "$PWD/iterm2/cc-status-tool" ~/.config/iterm2/with-detail/cc-status
 ```
 
-In `settings.json`, point the `UserPromptSubmit`, `PreToolUse`, `PostToolUse` and `Stop` entries at `~/.config/iterm2/cc-status-tool`. The other events stay on `cc-status`. Give the `Notification` entry `"matcher": "permission_prompt"`: the `idle_prompt` notification arrives a minute after each turn and blanks the reply preview, and `Stop` already covers everything it would show. It needs `jq`.
+In `settings.json`, point the `UserPromptSubmit`, `PreToolUse`, `PostToolUse` and `Stop` entries at `/Users/<you>/.config/iterm2/with-detail/cc-status`. The other events stay on `cc-status`. The link name and the absolute path both matter. iTerm2 3.7.4 checks that each of its hook events has a command that ends in `/cc-status` and is an executable path, and it offers to reinstall the hook on every launch when one does not. Don't accept that offer: Reinstall points every command ending in `/cc-status` back at iTerm2's own binary, which drops the wrapper. Give the `Notification` entry `"matcher": "permission_prompt"`: the `idle_prompt` notification arrives a minute after each turn and blanks the reply preview, and `Stop` already covers everything it would show. It needs `jq`.
 
 ### Session title
 
