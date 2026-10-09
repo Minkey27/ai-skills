@@ -110,27 +110,29 @@ Sort every commit in `<MERGE_BASE>..HEAD` into one of three kinds. An MR's commi
 
 A fix never leaves its own MR, even when it corrects code from an earlier one. **A fix stays where it is, as its own commit, when a commit between it and its target touches one of its files**, not counting fixes that fold into the same target. Moving it past that commit would conflict.
 
+**Reword a target whose message its fixes outgrew.** A fix's message describes a state the squashed history never shows, so it never carries over as written. Read each target's full message against its fixes' bodies. The target gets a new body when, once its fixes are folded in, a claim in its message no longer holds, its diff holds behavior or a design decision its message does not describe, or a fix carries a record the project keeps in commit messages, such as a migration's manual verification. Fixes that only correct what the message already claims need nothing: a re-parented migration, a restyled button. The new body is the target's own body with what the fixes brought worked in, written as if the code had always been that way, never as "fixed" or "now". The subject stays.
+
 **Stop and ask the user** when a first-version subject matches no commit or several on the epic, when a linear epic's MR carries no ticket ref, when a fix touches none of its MR's files, or when a fix's subject starts with `feat` (scope added after the first version). A `feat` the user keeps counts as a logical commit from then on, so later fixes can fold into it.
 
-Present the map grouped by MR, each fix indented under the commit it folds into, a fix that stays marked with the commit it cannot cross, and the count it produces:
+Present the map grouped by MR, each fix indented under the commit it folds into, a fix that stays marked with the commit it cannot cross, a reworded target marked `~`, and the count it produces. Show each `~` target's full new message below the map.
 
 ```
 (epic)  53ed5028e chore(skills): add the orderbevestiging skill
         ...
 !1318   2600e4837 feat(seed): BPZ-1321 put every option variation on the De Nieuwe Kolk offerte
 !1310   c173483ed feat(projecten): BPZ-1322 add the orderbevestiging catalogue question
-        5b146139f feat(projecten): BPZ-1322 persist and seed the orderbevestiging question catalogue
+      ~ 5b146139f feat(projecten): BPZ-1322 persist and seed the orderbevestiging question catalogue
           + 86d1f40e7 fix(projecten): BPZ-1322 guard the catalogue invariants in the table
           + 7fe8f7aaa fix(migrations): BPZ-1322 re-parent the catalogue migration onto the beslag drop
         ...
 19 commits in, 12 out
 ```
 
-**The squashed epic is exactly the map's unindented lines, one commit each, same subjects, same order.** Only the indented fixes disappear into the commit above them. There is no alternative grouping to offer. Wait for confirmation unless `yolo`.
+**The squashed epic is exactly the map's unindented lines, one commit each, same subjects, same order.** Only the indented fixes disappear into the commit above them, and only `~` lines get a new body. There is no alternative grouping to offer. Wait for confirmation unless `yolo`.
 
 ### Step 3E: Fold
 
-One `git rebase -i <MERGE_BASE>` pass with the `GIT_SEQUENCE_EDITOR` mechanics of Step 3. Every commit keeps its own message, so the only edits are turning a fix's `pick` into `fixup` and moving it to sit after its target and that target's earlier fixes. A commit left out of the todo is dropped.
+One `git rebase -i <MERGE_BASE>` pass with the `GIT_SEQUENCE_EDITOR` mechanics of Step 3. The only edits are turning a fix's `pick` into `fixup`, moving it to sit after its target and that target's earlier fixes, and adding Step 3's `exec git commit --amend --quiet -F <msgfile>` line after each `~` target's last fixup, with its approved message in the file. A commit left out of the todo is dropped.
 
 **Linear epic:** write the todo yourself, every commit in `<MERGE_BASE>..HEAD` in epic order.
 
@@ -139,6 +141,7 @@ pick c173483ed feat(projecten): BPZ-1322 add the orderbevestiging catalogue ques
 pick 5b146139f feat(projecten): BPZ-1322 persist and seed the orderbevestiging question catalogue
 fixup 86d1f40e7 fix(projecten): BPZ-1322 guard the catalogue invariants in the table
 fixup 7fe8f7aaa fix(migrations): BPZ-1322 re-parent the catalogue migration onto the beslag drop
+exec git commit --amend --quiet -F "$(git rev-parse --absolute-git-dir)/squash-msg-5b146139f.txt"
 pick fefdd908c feat(projecten): BPZ-1323 record the table decisions on the orderbevestiging
 fixup 697fb942b fix(migrations): BPZ-1323 re-parent the table decisions migration onto the catalogue
 pick 52ebdabef feat(projecten): BPZ-1323 compare the offerte at its send moment with now
@@ -155,7 +158,7 @@ Edit `squash-todo.txt` in place. Each MR's commits run from a `reset` line to th
 
 **Epic conflict rule.** Never resolve an epic conflict from `<PRE_SQUASH_REF>`. That tip holds every later MR's work, so the file would carry later tickets into an earlier MR's commit, and Step 4 would still pass.
 
-- **Stopped on a `pick` or `fixup`:** run `git rebase --abort`, put that fix back as a `pick` at its original position, below any `fixup` lines there so nothing folds into it, and run 3E again. Report it as left unfolded.
+- **Stopped on a `pick` or `fixup`:** run `git rebase --abort`, put that fix back as a `pick` at its original position, below any `fixup` lines there so nothing folds into it, take what it brought out of its target's new message, and run 3E again. Report it as left unfolded.
 - **Stopped on a `merge`, or on the `exec` after one:** the original merge holds the right result, because folding leaves both of its parents' trees unchanged. Take its tree. After a failed `exec` the merge is already committed, so amend it:
 
   ```bash
@@ -338,7 +341,8 @@ GIT_EDITOR=true git rebase --continue
 | Writing snapshots, todo lists or message files to `/tmp` | `/tmp` is shared across worktrees and sessions, so a concurrent run overwrites them. Use `git rev-parse --absolute-git-dir` |
 | Relying on `$MERGE_BASE` or `$PRE_SQUASH_REF` in a later command | Each Bash call is a fresh shell and an empty variable fails silently. Hardcode the hash |
 | Manually reasoning about conflict markers | Use `git show <PRE_SQUASH_REF>:<file>` to get the known-good final state, then check the grouping for drift |
-| Merging or rewording an epic's logical commits to reach 2–5 | Each MR's logical commits were reviewed as they are. Epic Branch Mode keeps every one, whatever the count, and folds only the fixes |
+| Merging an epic's logical commits or changing their subjects to reach 2–5 | Each MR's logical commits were reviewed as they are. Epic Branch Mode keeps every one, whatever the count, and folds only the fixes |
 | Comparing rebuilt merges to check an epic | A merge restored from its original matches by construction. Compare each MR's last non-merge commit |
 | Resolving an epic conflict from `PRE_SQUASH_REF` | That tip carries later MRs' work into the earlier commit, and Step 4 still passes. Abort and leave the fix unfolded |
+| Appending each fix's body to its target's message | A fix's body narrates a bug the squashed history never shows. Work in only what the fixes changed about the final code, and leave a target whose message still holds untouched |
 | Searching for "X passed" in test output | Parallel runners may omit summary line — grep for absence of `FAILED`/`ERROR` instead |
