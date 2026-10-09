@@ -119,14 +119,32 @@ if [ -f "$env_file" ]; then
   fi
 fi
 
-# --- Branch diff vs merge-base (base branch: origin/main, else origin/master) ---
+# --- Branch diff vs the parent branch ---
+# The parent is whichever of origin/main, origin/master and origin/epic/* leaves
+# HEAD with the fewest commits of its own. Commits are matched by patch, not by
+# SHA, so a branch cut from an epic that was rebased since still counts only its
+# own work. An epic's own remote is excluded, so an epic compares against main.
 diff_part=""
 if [ -n "$dir" ] && [ -n "$branch" ]; then
-  for base_ref in origin/main origin/master; do
-    base=$(git -C "$dir" merge-base "$base_ref" HEAD 2>/dev/null) && [ -n "$base" ] && break
+  best=""
+  epics=$(git -C "$dir" for-each-ref --format='%(refname:short)' \
+    --exclude="refs/remotes/origin/${branch}" refs/remotes/origin/epic/ 2>/dev/null)
+  for ref in origin/main origin/master $epics; do
+    own=$(git -C "$dir" rev-list --cherry-pick --right-only --no-merges --topo-order \
+      "${ref}...HEAD" 2>/dev/null) || continue
+    count=$(printf '%s' "$own" | grep -c .)
+    if [ -z "$best" ] || [ "$count" -lt "$best" ]; then
+      best=$count
+      parent_ref=$ref
+      oldest=$(printf '%s\n' "$own" | tail -1)
+    fi
   done
-  head_sha=$(git -C "$dir" rev-parse HEAD 2>/dev/null)
-  if [ -n "$base" ] && [ "$base" != "$head_sha" ]; then
+  # Diff from the newer of the merge-base and the commit before the oldest own
+  # one: the first covers main merged into the branch, the second a rebased epic.
+  if [ "${best:-0}" -gt 0 ]; then
+    base=$(git -C "$dir" merge-base "$parent_ref" HEAD)
+    fork=$(git -C "$dir" rev-parse "${oldest}^")
+    git -C "$dir" merge-base --is-ancestor "$base" "$fork" && base=$fork
     set -- $(git -C "$dir" diff --numstat "$base" 2>/dev/null | awk '{a+=$1; d+=$2} END {print a+0, d+0}')
     added=$1
     deleted=$2
