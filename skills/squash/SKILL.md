@@ -40,6 +40,10 @@ BEST=""; BEST_N=""
 for REF in $(git for-each-ref --format='%(refname:short)' refs/heads refs/remotes/origin \
              | grep -v -E "^origin/HEAD$|^origin$|^${BRANCH}$|^origin/${BRANCH}$"); do
   MB=$(git merge-base "$REF" HEAD 2>/dev/null) || continue
+  # A force-pushed parent no longer contains the tip HEAD was built on; score from that tip.
+  case "$REF" in origin/*)
+    FP=$(git merge-base --fork-point "$REF" HEAD 2>/dev/null) && ! git merge-base --is-ancestor "$FP" "$REF" && MB=$FP ;;
+  esac
   # Skip refs that already contain HEAD: their merge-base IS HEAD, scoring a false 0.
   [ "$MB" = "$(git rev-parse HEAD)" ] && continue
   N=$(git rev-list --count "$MB..HEAD")
@@ -53,6 +57,8 @@ echo "default: $DEFAULT"
 echo "nearest by divergence: $BEST ($BEST_N commits since its merge-base)"
 ```
 
+The `--fork-point` override covers a parent that was force-pushed after this branch forked, such as an epic re-cut onto main. Its old commits stay in HEAD under SHAs the new parent no longer has, so the plain merge-base falls back to main and the parent's work gets counted as this branch's own. When every parent commit was rewritten, that is a tie, and the tie silently goes to the default. The remote ref's reflog still holds the old tip. Only `origin/` refs get the override: a local branch's reflog starts with the commit it was created from, which would score every sibling cut from the same tip as a parent.
+
 Never score by containment instead (every branch whose tip is an ancestor of HEAD). Every branch already merged into the default passes that test, so a long-lived repository lists hundreds of candidates, the "closest" one only measures how recently it was merged, and the default itself drops out as soon as its tip moves past HEAD's fork point. A merged branch's tip sits at or behind the default's merge-base, so divergence scoring ranks it no better than the default, and the tie goes to the default.
 
 - Nearest is the default, local or `origin/`, or there is no candidate at all: use the default. Say nothing.
@@ -64,9 +70,13 @@ Never score by containment instead (every branch whose tip is an ancestor of HEA
 
 ```bash
 BASE_BRANCH=<confirmed base>
+FP=$(git merge-base --fork-point "$BASE_BRANCH" HEAD 2>/dev/null) && ! git merge-base --is-ancestor "$FP" "$BASE_BRANCH" \
+  && echo "STOP: $BASE_BRANCH was force-pushed after this branch forked from it"
 echo "MERGE_BASE=$(git merge-base HEAD "$BASE_BRANCH")"
 echo "PRE_SQUASH_REF=$(git rev-parse HEAD)"
 ```
+
+**On `STOP`, squash nothing.** The branch still carries the base's old commits, and the merge-base sits below them, so a squash folds the base's work into this branch's commits. Tell the user to restack first with the `rebase-on-epic` skill, then run squash again. Called from `finalize-branch`, stop the whole run.
 
 **`PRE_SQUASH_REF` is the single most important safety mechanism.** It enables instant recovery (`git reset --hard <PRE_SQUASH_REF>`), conflict resolution via `git show <PRE_SQUASH_REF>:<file>`, and it is the tree Step 4 compares against.
 
@@ -231,6 +241,7 @@ GIT_EDITOR=true git rebase --continue
 | Force-pushing without telling user | Run standalone: remind the user the branch needs a force-push and confirm before pushing. Called from `finalize-branch`: don't push at all, its Step 4e pushes with a pinned lease |
 | Assuming base is always the default branch | Branch may be stacked on another feature branch, so always run Step 0 to detect the real base |
 | Scoring base candidates by containment | Every branch merged into the default is an ancestor of HEAD. Score by commits since divergence (Step 0) |
+| Squashing on a parent that was force-pushed after the fork | Its old commits are still in the branch. Step 1 stops; restack with `rebase-on-epic`, then squash |
 | Using the base branch tip instead of the merge-base | The tip can move, so Steps 2 and 3 always take `<MERGE_BASE>` |
 | Running two rebases (fixup then reword) | One pass: `pick`, `fixup` and `exec git commit --amend -F` lines in a single todo list |
 | Setting messages with a counter-based `GIT_EDITOR` | A conflict re-runs the step and desyncs the counter, leaving `# This is a combination of N commits` as a subject. Use the `exec` lines |
