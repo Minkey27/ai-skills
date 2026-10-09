@@ -1,6 +1,6 @@
 ---
 name: squash
-description: Use when the current branch has messy or fixup commits that need to be reorganized into clean logical commits before merging or creating a PR. Pass `yolo` to take the recommended grouping without waiting for confirmation.
+description: Use when the current branch has messy or fixup commits that need to be reorganized into clean logical commits before merging or creating a PR, including an `epic/*` branch whose merged MRs carry review-fix commits. Pass `yolo` to take the recommended grouping without waiting for confirmation.
 ---
 
 # Squash Branch Commits
@@ -86,7 +86,95 @@ Every later step uses the merge-base, never the base branch's tip. The tip may m
 
 4. **Has commits to squash.** `git log <MERGE_BASE>..HEAD --oneline` must show 2+ commits. If only 1: nothing to squash.
 
+## Epic Branch Mode
+
+**Applies when the current branch is `epic/*`.** An epic is a stack of merged MRs. Each MR arrived as logical commits, already squashed and reviewed, followed by fixes merged without another squash. Squashing the epic folds each MR's fixes into that MR's logical commits, and every other commit survives as it is.
+
+Steps 2E and 3E replace Steps 2 and 3, and the epic conflict rule replaces Conflict Resolution. Steps 4, 5 and 6 run as written, plus the boundary check at the end of this section. `yolo` takes the Step 2E map without waiting.
+
+### Step 2E: Map Each MR's Commits
+
+Each merged MR's **first** diff version lists exactly its logical commits, because the MR was opened on a finalized branch. Epic rebases change SHAs, so match those subjects against the epic's commits.
+
+```bash
+glab mr list --target-branch <EPIC> --merged --per-page 100 -F json | jq -r '.[] | "\(.iid) \(.source_branch)"'
+glab api "projects/:id/merge_requests/<IID>/versions" | jq -r 'min_by(.id).id'
+glab api "projects/:id/merge_requests/<IID>/versions/<FIRST_VERSION_ID>" | jq -r '.commits | reverse | .[].title'
+```
+
+Sort every commit in `<MERGE_BASE>..HEAD` into one of three kinds. An MR's commits are the non-merge commits on the second-parent side of the merge whose subject names its source branch (`git log --no-merges <MERGE>^1..<MERGE>^2`). On a linear epic, with no such merge, they are its logical commits plus every commit after the first of them that names its ticket (the ref its logical commits carry, e.g. `BPZ-1322`).
+
+- **Logical commit:** an MR commit whose subject is in the MR's first version.
+- **Fix:** any other MR commit. That covers the review rounds and fixes made on the epic later, such as a migration re-parented during an epic rebase. It folds into the **latest logical commit of the same MR that touches one of its files** (`git show --stat`).
+- **Kept commit:** everything else, such as commits made directly on the epic and every merge commit.
+
+A fix never leaves its own MR, even when it corrects code from an earlier one. **A fix stays where it is, as its own commit, when a commit between it and its target touches one of its files**, not counting fixes that fold into the same target. Moving it past that commit would conflict.
+
+**Stop and ask the user** when a first-version subject matches no commit or several on the epic, when a linear epic's MR carries no ticket ref, when a fix touches none of its MR's files, or when a fix's subject starts with `feat` (scope added after the first version). A `feat` the user keeps counts as a logical commit from then on, so later fixes can fold into it.
+
+Present the map grouped by MR, each fix indented under the commit it folds into, a fix that stays marked with the commit it cannot cross, and the count it produces:
+
+```
+(epic)  53ed5028e chore(skills): add the orderbevestiging skill
+        ...
+!1318   2600e4837 feat(seed): BPZ-1321 put every option variation on the De Nieuwe Kolk offerte
+!1310   c173483ed feat(projecten): BPZ-1322 add the orderbevestiging catalogue question
+        5b146139f feat(projecten): BPZ-1322 persist and seed the orderbevestiging question catalogue
+          + 86d1f40e7 fix(projecten): BPZ-1322 guard the catalogue invariants in the table
+          + 7fe8f7aaa fix(migrations): BPZ-1322 re-parent the catalogue migration onto the beslag drop
+        ...
+19 commits in, 12 out
+```
+
+**The squashed epic is exactly the map's unindented lines, one commit each, same subjects, same order.** Only the indented fixes disappear into the commit above them. There is no alternative grouping to offer. Wait for confirmation unless `yolo`.
+
+### Step 3E: Fold
+
+One `git rebase -i <MERGE_BASE>` pass with the `GIT_SEQUENCE_EDITOR` mechanics of Step 3. Every commit keeps its own message, so the only edits are turning a fix's `pick` into `fixup` and moving it to sit after its target and that target's earlier fixes. A commit left out of the todo is dropped.
+
+**Linear epic:** write the todo yourself, every commit in `<MERGE_BASE>..HEAD` in epic order.
+
+```
+pick c173483ed feat(projecten): BPZ-1322 add the orderbevestiging catalogue question
+pick 5b146139f feat(projecten): BPZ-1322 persist and seed the orderbevestiging question catalogue
+fixup 86d1f40e7 fix(projecten): BPZ-1322 guard the catalogue invariants in the table
+fixup 7fe8f7aaa fix(migrations): BPZ-1322 re-parent the catalogue migration onto the beslag drop
+pick fefdd908c feat(projecten): BPZ-1323 record the table decisions on the orderbevestiging
+fixup 697fb942b fix(migrations): BPZ-1323 re-parent the table decisions migration onto the catalogue
+pick 52ebdabef feat(projecten): BPZ-1323 compare the offerte at its send moment with now
+```
+
+**Epic with merge commits:** add `--rebase-merges`, so git rebuilds each merge instead of flattening it. Git writes that todo's `label`, `reset` and `merge -C` lines, so dump it first. The editor's non-zero exit aborts the rebase before anything replays:
+
+```bash
+GITDIR="$(git rev-parse --absolute-git-dir)"
+GIT_SEQUENCE_EDITOR="sh -c 'cp \"\$1\" \"$GITDIR/squash-todo.txt\"; exit 1' --" git rebase -i --rebase-merges <MERGE_BASE>
+```
+
+Edit `squash-todo.txt` in place. Each MR's commits run from a `reset` line to the `label` its merge uses; fold fixes inside that run, and never move a line across a `label`, `reset` or `merge` line. After every `merge -C <MERGE> ...` line, add `exec git diff --quiet <MERGE> HEAD`: a merge can carry hand edits beyond its conflicts, and git's rebuilt merge silently drops them. Then run it with `GIT_SEQUENCE_EDITOR="cp '$GITDIR/squash-todo.txt'" GIT_EDITOR=true git rebase -i --rebase-merges <MERGE_BASE>`.
+
+**Epic conflict rule.** Never resolve an epic conflict from `<PRE_SQUASH_REF>`. That tip holds every later MR's work, so the file would carry later tickets into an earlier MR's commit, and Step 4 would still pass.
+
+- **Stopped on a `pick` or `fixup`:** run `git rebase --abort`, put that fix back as a `pick` at its original position, below any `fixup` lines there so nothing folds into it, and run 3E again. Report it as left unfolded.
+- **Stopped on a `merge`, or on the `exec` after one:** the original merge holds the right result, because folding leaves both of its parents' trees unchanged. Take its tree. After a failed `exec` the merge is already committed, so amend it:
+
+  ```bash
+  git restore --source=<MERGE> --staged --worktree :/
+  git commit --amend --no-edit --quiet    # only after a failed exec
+  GIT_EDITOR=true git rebase --continue
+  ```
+
+**Boundary check, after Step 4.** Step 4 proves the epic's final tree. It cannot see work that moved from one MR into another. Compare each MR's end before and after: the newest of its non-merge commits in `<PRE_SQUASH_REF>`, fixes included, against the new commit for its last unindented map line. For !1310 above that is `7fe8f7aaa` against the new `persist and seed` commit. Never compare the merges themselves: a restored merge matches its original by construction.
+
+```bash
+git diff --quiet <OLD_MR_END> <NEW_MR_END> && echo "!<IID> identical" || echo "!<IID> CHANGED"
+```
+
+Any `CHANGED` fails Step 4: restore `<PRE_SQUASH_REF>`.
+
 ## Step 2: Analyze Commits
+
+On an `epic/*` branch, use Step 2E instead.
 
 Run:
 ```bash
@@ -177,7 +265,7 @@ git diff --quiet <PRE_SQUASH_REF> HEAD && echo "identical" || git diff --stat <P
 - **Empty status and `identical`** = the squashed tip has exactly the pre-squash tree. All changes preserved.
 - **Any other output** = something was lost or changed during rebase. **STOP.** Show the difference to the user. Do NOT proceed.
 
-Re-run pre-flight check 3 as well: a rebase stopped on a failed `exec` leaves a clean, identical tree while it is still in progress.
+On an epic, run Epic Branch Mode's boundary check too. Re-run pre-flight check 3 as well: a rebase stopped on a failed `exec` leaves a clean, identical tree while it is still in progress.
 
 If verification fails, restore immediately (run `git rebase --abort` first if a rebase is still in progress):
 ```bash
@@ -202,6 +290,8 @@ Summarize:
 - Grouping drift after a conflicted squash (see Conflict Resolution), or none
 
 ## Conflict Resolution
+
+On an epic, the epic conflict rule in Step 3E applies instead.
 
 Rebase conflicts are common when reordering commits, because intermediate states are replayed that may never have existed together. Since `PRE_SQUASH_REF` holds the known-good final state:
 
@@ -248,4 +338,7 @@ GIT_EDITOR=true git rebase --continue
 | Writing snapshots, todo lists or message files to `/tmp` | `/tmp` is shared across worktrees and sessions, so a concurrent run overwrites them. Use `git rev-parse --absolute-git-dir` |
 | Relying on `$MERGE_BASE` or `$PRE_SQUASH_REF` in a later command | Each Bash call is a fresh shell and an empty variable fails silently. Hardcode the hash |
 | Manually reasoning about conflict markers | Use `git show <PRE_SQUASH_REF>:<file>` to get the known-good final state, then check the grouping for drift |
+| Merging or rewording an epic's logical commits to reach 2–5 | Each MR's logical commits were reviewed as they are. Epic Branch Mode keeps every one, whatever the count, and folds only the fixes |
+| Comparing rebuilt merges to check an epic | A merge restored from its original matches by construction. Compare each MR's last non-merge commit |
+| Resolving an epic conflict from `PRE_SQUASH_REF` | That tip carries later MRs' work into the earlier commit, and Step 4 still passes. Abort and leave the fix unfolded |
 | Searching for "X passed" in test output | Parallel runners may omit summary line — grep for absence of `FAILED`/`ERROR` instead |
