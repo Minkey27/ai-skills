@@ -54,9 +54,9 @@ a test run would.
 A Tier 1 run is a **list of test files**, never a directory:
 
 1. every test file you added or changed;
-2. the existing files named after the modules you touched — find them with the
-   `Glob` tool (`**/test_<module>*.py`) or the `Grep` tool (`<ChangedSymbol>`,
-   glob `**/tests/**`), never a host `ls`/`grep` on a container path;
+2. the existing files named after the modules you touched, found with the session's
+   search tool on the host checkout (`**/test_<module>*.py`, or `<ChangedSymbol>`
+   under `tests/`), never on a container path;
 3. for a cross-cutting change, one `-k` expression naming the area, over the
    narrowest directory that holds the matching files — that directory is the
    collection root, not the target.
@@ -123,8 +123,8 @@ notification — wait for that notification; do not poll, do not start another r
 - `exit: 0` → done. No `grep`, `tail`, `wc` or `Read` to "really confirm" — a
   second verification command after a green exit is the spiral this rule exists
   to stop.
-- non-zero → `Grep` tool (never `Bash(grep …)`) on `.test-output.txt` with
-  `^FAILED |^ERROR ` for the names, then `Read` for the tracebacks.
+- non-zero → search `.test-output.txt` for `^FAILED |^ERROR ` with the session's
+  search tool to get the names, then `Read` for the tracebacks.
 - **No `exit:` line anywhere** (session restart, killed wrapper shell) → the
   verdict is in the artifact, not in a re-run. The last line of
   `.test-output.txt` is pytest's tally, `N passed[, M skipped] in Ns`, wrapped in
@@ -158,7 +158,7 @@ Every failure on a feature branch is yours. Tier 1 and Tier 2 both end at
 ## Hard rules
 
 - `-n 0` on every command — xdist hoards CPU/memory on the dev machine and masks ordering bugs.
-- Never pipe pytest through `tail`, `grep` or `head`; redirect, then the `Grep` tool.
+- Never pipe pytest through `tail`, `grep` or `head`; redirect to a file, then search the file.
 - Never `--ignore` to skip a failing test.
 - Never `-v`/`-s` by default — only on a single failing test's re-run.
 - Never a bare directory as a Tier 1 target; never the full suite during implementation; never Tier 2 as a subagent.
