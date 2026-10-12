@@ -1,6 +1,7 @@
 ---
 name: mr-review
-description: "MANUAL INVOCATION ONLY. Trigger exclusively when the user types the literal slash command `/mr-review` — never on natural-language phrases like 'review the MR' or 'review this branch'. Reviews the GitLab MR of the currently checked-out branch and posts user-approved findings back as line-anchored diff notes. Works for the user's own MR or a teammate's. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't checked out. Supports `--dry-run`."
+description: "Reviews the GitLab MR of the currently checked-out branch and posts user-approved findings back as line-anchored diff notes. Works for the user's own MR or a teammate's. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't checked out. Supports `--dry-run`."
+disable-model-invocation: true
 ---
 
 # /mr-review
@@ -8,8 +9,6 @@ description: "MANUAL INVOCATION ONLY. Trigger exclusively when the user types th
 Review the open MR on the current branch end to end: gather intent (ticket + MR description), run `superpowers:requesting-code-review`, verify every finding against the real code, let the user curate, post the approved findings as line-anchored diff notes.
 
 ## When to use
-
-**Manual-only.** Trigger on the literal `/mr-review`. For "review the MR" in natural language, don't invoke this — handle it without the skill or ask whether they want `/mr-review`.
 
 Works on any MR whose source branch is checked out — the user's own (pre-flight self-review) or a teammate's (`glab mr checkout <iid>`). Authorship only changes tone: notes on a teammate's MR go to the author, so be precise and neutral.
 
