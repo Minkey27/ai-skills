@@ -54,9 +54,9 @@ a test run would.
 A Tier 1 run is a **list of test files**, never a directory:
 
 1. every test file you added or changed;
-2. the existing files named after the modules you touched, found with the session's
-   search tool on the host checkout (`**/test_<module>*.py`, or `<ChangedSymbol>`
-   under `tests/`), never on a container path;
+2. the existing files named after the modules you touched, found by searching
+   the host checkout for `test_<module>*.py` or `<ChangedSymbol>` under `tests/`
+   (never a container path);
 3. for a cross-cutting change, one `-k` expression naming the area, over the
    narrowest directory that holds the matching files — that directory is the
    collection root, not the target.
@@ -73,7 +73,7 @@ docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/integra
 
 Flags: `-x` stop at the first failure; `--tb=short`; no `-v`/`-s` — debug flags for
 a single failing re-run, 10–100× more output on a passing run. Pytest's default
-`-rfE` already prints the `FAILED`/`ERROR` lines the Grep pattern below matches.
+`-rfE` already prints the `FAILED`/`ERROR` lines the pattern below matches.
 
 **A bare directory is not a Tier 1 target.** The directory "covering" a route module
 is often a flat few-thousand-test bucket — a full-suite run under a targeted label.
@@ -123,8 +123,8 @@ notification — wait for that notification; do not poll, do not start another r
 - `exit: 0` → done. No `grep`, `tail`, `wc` or `Read` to "really confirm" — a
   second verification command after a green exit is the spiral this rule exists
   to stop.
-- non-zero → search `.test-output.txt` for `^FAILED |^ERROR ` with the session's
-  search tool to get the names, then `Read` for the tracebacks.
+- non-zero → search `.test-output.txt` for `^FAILED |^ERROR ` to get the
+  names, then `Read` for the tracebacks.
 - **No `exit:` line anywhere** (session restart, killed wrapper shell) → the
   verdict is in the artifact, not in a re-run. The last line of
   `.test-output.txt` is pytest's tally, `N passed[, M skipped] in Ns`, wrapped in
@@ -141,7 +141,7 @@ Every failure on a feature branch is yours. Tier 1 and Tier 2 both end at
 
 ### Tier 1 failure (`-x` stopped)
 
-1. `Grep` the name, `Read` the traceback, fix.
+1. Search the output for the name, `Read` the traceback, fix.
 2. Re-run that one test with `-vs`:
    ```bash
    docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/path/to/test.py::test_name -x -vs -n 0 --tb=short > .test-output.txt 2>&1; echo "exit: $?"
@@ -150,7 +150,7 @@ Every failure on a feature branch is yours. Tier 1 and Tier 2 both end at
 
 ### Tier 2 failures
 
-1. `Grep` every name, `Read` the tracebacks.
+1. Search the output for every name, `Read` the tracebacks.
 2. Report all of them **before** fixing anything.
 3. Fix; re-run each fixed test alone with `-vs`.
 4. Re-run the suite once; `exit: 0`.
