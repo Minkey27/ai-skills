@@ -248,7 +248,7 @@ command -v plannotator >/dev/null &&
 plannotator annotate "$(git rev-parse --absolute-git-dir)/mr-review-$(git rev-parse --abbrev-ref HEAD | tr '/' '-').md" --gate --json
 ```
 
-`--gate` adds Approve; `--json` emits the decision on stdout. **Run it with `run_in_background: true`** and poll — the user may take hours, and a foreground call dies at the Bash tool's 10-minute cap.
+`--gate` adds Approve; `--json` emits the decision on stdout. **Run it with `run_in_background: true`**; the harness notifies you when it exits. The user may take hours, and a foreground call dies at the Bash tool's 10-minute cap.
 
 **Approve discards annotations.** Approve emits a bare `approved` and drops any annotations made first. A user who has marked up a block must submit via the annotation flow. Say this when handing over.
 
