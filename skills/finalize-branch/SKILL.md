@@ -151,13 +151,13 @@ Tasks:
      recommendation wrong — that interaction is invisible to anyone reading a single
      finding in isolation.
 
-Report per finding id, under 150 words each:
+Report per finding id, as briefly as the verdict allows:
   - issue_real: yes / no / partial — with one-sentence reason
   - fix_sound:  yes / no / risky   — with one-sentence reason
   - corrected_lines: <if the line numbers were wrong, give the right ones>
   - notes: anything else worth knowing, including any interaction found in task 3
 
-Be specific. Do not parrot the findings back — actually look at the code.
+Report what the code shows; don't restate the finding.
 ```
 
 Aggregate into a table keyed by finding id.

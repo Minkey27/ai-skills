@@ -201,13 +201,13 @@ Tasks:
      recommendation wrong — that interaction is invisible to anyone reading a single
      finding in isolation.
 
-Report per finding id, under 150 words each:
+Report per finding id, as briefly as the verdict allows:
   - issue_real: yes / no / partial — with one-sentence reason
   - fix_sound:  yes / no / risky   — with one-sentence reason
   - corrected_lines: <if the line numbers were wrong, give the right ones>
   - notes: anything else worth knowing, including any interaction found in task 3
 
-Be specific. Do not parrot the findings back — actually look at the code.
+Report what the code shows; don't restate the finding.
 ```
 
 Aggregate into one table keyed by finding id.
@@ -421,7 +421,7 @@ catches it — the POST succeeded, so there is no failed request to notice.
 **Suggested fix:** <recommendation in 1–3 sentences>
 ```
 
-No finding object dump, no verification metadata (that's for you, not the MR audience). Under ~120 words — long notes get skimmed.
+No finding object dump, no verification metadata (that's for you, not the MR audience). Write it for the author reading in the diff view: what is wrong, why it matters, the fix, nothing else.
 
 ## Failure modes
 

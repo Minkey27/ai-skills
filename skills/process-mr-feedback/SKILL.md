@@ -170,7 +170,7 @@ Tasks:
      fix being applied, changes whether another is real or makes another's fix wrong — that
      interaction is invisible to anyone judging a single thread in isolation.
 
-Report per thread, under 150 words each:
+Report per thread, as briefly as the verdict allows:
   - validity: valid | invalid | needs-clarification — one-sentence reason
   - invalid_kind (only if invalid): reviewer-misread | already-handled | not-applicable
   - evidence (required if invalid): what you read that shows the comment is wrong
@@ -178,8 +178,8 @@ Report per thread, under 150 words each:
   - corrected_anchor: <right path:line if the cited one was wrong>
   - notes: anything else worth knowing, including any interaction found in task 4
 
-Read the actual files at the branch tip — do not parrot the comments back. If judging a thread
-needs files beyond this one, read them.
+If judging a thread needs files beyond this one, read them. Report what the code shows;
+don't restate the comment.
 ```
 
 `evidence` is what makes an `invalid` verdict curatable at the gate.
