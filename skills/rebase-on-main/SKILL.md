@@ -59,15 +59,13 @@ If this fails (e.g., because the current branch tracks `main`), fall back to:
 git fetch origin main
 ```
 
-### Save recovery point and diff snapshot
+### Tag the pre-rebase head
 
 ```bash
-PRE_REBASE_REF=$(git rev-parse HEAD)
-MERGE_BASE=$(git merge-base HEAD main)
-git diff main...$PRE_REBASE_REF > /tmp/rebase-before.diff
+git tag "pre-rebase/$(git branch --show-current)"
 ```
 
-`$PRE_REBASE_REF` allows instant recovery. The diff snapshot allows verification that no changes were lost.
+The tag is the recovery point and the baseline for **Diff Verification**. It outlives the shell, which a variable holding the SHA would not, and it needs no temp file that another worktree could overwrite. If it already exists, an earlier run did not finish: ask the user before replacing it.
 
 ## Rebase
 
@@ -101,18 +99,17 @@ For each conflicting commit during the rebase:
 Verify no changes were lost or mangled during the rebase:
 
 ```bash
-git diff main > /tmp/rebase-after.diff
-diff /tmp/rebase-before.diff /tmp/rebase-after.diff
+B="pre-rebase/$(git branch --show-current)"
+diff <(git diff -U0 main..."$B" | grep -v -E '^(@@|index )') \
+     <(git diff -U0 main...HEAD | grep -v -E '^(@@|index )')
 ```
+
+Line numbers and blob hashes are filtered out because they shift whenever main changed the same files.
 
 - **No output** = diffs are identical. All branch changes preserved. Proceed to **Migration Verification**.
 - **Any output** = something changed during rebase. **STOP.** Show the difference to the user.
   - If the difference is expected (e.g., a conflict resolution intentionally changed logic): user confirms, proceed.
-  - If unexpected: recover immediately:
-    ```bash
-    git reset --hard $PRE_REBASE_REF
-    ```
-    Report what happened and stop.
+  - If unexpected: follow **Recovery**, report what happened and stop.
 
 ## Migration Verification
 
@@ -216,28 +213,30 @@ If tests fail: stop and report. Do not attempt to auto-fix test failures.
 
 If anything goes wrong after the rebase started, the branch can be restored:
 
+Mid-rebase, `git rebase --abort` puts the branch back. Once the rebase has finished:
+
 ```bash
-git reset --hard $PRE_REBASE_REF
+git reset --keep "pre-rebase/$(git branch --show-current)"
 ```
 
-This restores the branch to its exact pre-rebase state. Use this when:
+This restores the branch to its exact pre-rebase state, and `--keep` refuses to run if it would discard uncommitted changes. Use this when:
 - Diff verification shows unexpected changes and the user doesn't confirm
 - The rebase leaves the codebase in an unrecoverable state
 - The user asks to abort at any point
 
 ## Cleanup
 
-After successful verification, remove temporary files:
+After successful verification, delete the tag:
 
 ```bash
-rm -f /tmp/rebase-before.diff /tmp/rebase-after.diff
+git tag -d "pre-rebase/$(git branch --show-current)"
 ```
 
 ## Report
 
 **All pass:** Summarize what happened — number of commits rebased, conflicts resolved (and how), diff verification result, migration changes (if any), lint/format fixes (if any), test results.
 
-**Any failure:** Report the failure output and the recovery command (`git reset --hard <ref>`). Do not force-push or make further changes.
+**Any failure:** Report the failure output and the recovery command (`git reset --keep pre-rebase/<branch>`). Do not force-push or make further changes.
 
 ## Red Flags — STOP
 
@@ -251,7 +250,7 @@ rm -f /tmp/rebase-before.diff /tmp/rebase-after.diff
 | Mistake | Fix |
 |---------|-----|
 | Not fetching main first | Local main may be stale — always `git fetch origin main:main` |
-| No recovery snapshot | Always save `PRE_REBASE_REF` before starting |
+| No recovery point | Always tag the head before starting |
 | Skipping diff verification | Silent conflict resolution errors are the #1 source of post-rebase bugs |
 | Running pytest directly | Always invoke the pytest-docker skill first |
 | Auto-fixing test failures | Lint/format can be auto-fixed; test failures cannot — they need investigation |
