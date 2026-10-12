@@ -434,9 +434,9 @@ No finding object dump, no verification metadata (that's for you, not the MR aud
 
 ## Why this shape
 
-**Verification fan-out.** LLM reviewers pattern-match on diff text and over-trigger; verification catches that before the user filters 30 items by hand. **Discrepancy report.** Finding-level review misses "is this MR doing what it claims?" — often where the biggest issue is. The verdict lives in the heading because a report without one read as background prose and got skipped even when it flagged a mismatch.
+**Verification fan-out.** LLM reviewers pattern-match on diff text and over-trigger; verification catches that before the user filters 30 items by hand. **Discrepancy report.** Finding-level review misses "is this MR doing what it claims?" — often where the biggest issue is. The verdict lives in the heading because a report without one reads as background prose and gets skipped even when it flags a mismatch.
 
-**Curation gate.** The turn break it replaced was a proxy: a run once emitted the report and the first prompt in one turn, and the user was asked to curate findings they'd never read. A stopped turn proves the assistant stopped talking, not that anyone read anything; a blocking `plannotator annotate --gate` can't return until they have.
+**Curation gate.** A report and its first prompt in one turn ask the user to curate findings they never read. A stopped turn proves the assistant stopped talking, not that anyone read anything; a blocking `plannotator annotate --gate` can't return until they have.
 
 **Per-finding `**Default:**`.** Recommended and Optional have opposite defaults (all out unless subtracted vs none out unless named); one flat list can't express that. Stating the default in each block does, next to the prose that justifies it. The two sequential prompts survive as the fallback, keeping the split and the turn break.
 

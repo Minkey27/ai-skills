@@ -449,13 +449,13 @@ Everything reviewers can see goes out together behind **one** confirmation.
 
 ## Why this shape
 
-**Verification is for the remedies, not the verdicts.** Reviewers rarely flag things that aren't real, but often propose fixes that don't fit — a precedent that doesn't exist, a fix that works at the anchor and breaks a caller. Across this project's processed MRs `invalid` fires on a small minority of human threads; corrected remedies run several times higher. Stage 2 hands the user a checked fix, and the read it takes is the one Stage 4 needs anyway.
+**Verification is for the remedies, not the verdicts.** Reviewers rarely flag things that aren't real, but often propose fixes that don't fit: a precedent that doesn't exist, a fix that works at the anchor and breaks a caller. Stage 2 hands the user a checked fix, and the read it takes is the one Stage 4 needs anyway.
 
-**One verifier per file.** Per-thread dispatch re-read each file N times and hid the interaction that matters most: a false positive on one comment is often what makes a neighbour's suggested fix wrong. Grouping by file is cheaper and more accurate, so there is no per-thread path.
+**One verifier per file.** Per-thread dispatch would re-read each file N times and hide the interaction that matters most: a false positive on one comment is often what makes a neighbour's suggested fix wrong. Grouping by file is cheaper and more accurate, so there is no per-thread path.
 
-**Flat `sonnet`, full verdict space — the gate is the guard.** An earlier version routed across `haiku`/`sonnet`/session and forbade cheap tiers from returning `invalid`, since a wrong dismissal auto-resolves a real finding. True, but redundant: no `invalid` reaches GitLab without the user approving it at the Stage 3 gate, where silence is never consent. What that machinery protected survives as one required field — `evidence` — so the person approving a Dismiss can judge it.
+**Flat `sonnet`, full verdict space; the gate is the guard.** A wrong dismissal would auto-resolve a real finding, but no `invalid` reaches GitLab without the user approving it at the Stage 3 gate, where silence is never consent. The required `evidence` field is what lets the person approving a Dismiss judge it.
 
-**The gate replaces a turn break that was only a proxy.** When analysis and question shared a turn, the user curated findings they'd never read. A stopped turn proves the assistant stopped talking; a blocking `plannotator annotate --gate` can't return until they've been in the document, and each disposition sits in its own block instead of a list three screens away. On the fallback path the turn break still carries the whole guarantee.
+**The gate is the read guarantee.** When analysis and question share a turn, the user curates findings they never read. A stopped turn proves only that the assistant stopped talking; a blocking `plannotator annotate --gate` can't return until they've been in the document, and each disposition sits in its own block instead of a list three screens away. On the fallback path the turn break carries the whole guarantee.
 
 **Text, never `AskUserQuestion`.** Its countdown assumes a default on expiry, and the decisions here are "close a reviewer's finding" and "post on a shared MR". Its labels also truncate; numbered text has no 4-option ceiling, so a 12-thread Fix list is one prompt.
 
