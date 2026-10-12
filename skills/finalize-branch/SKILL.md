@@ -470,44 +470,13 @@ Return the MR/PR URL.
 
 ## Red Flags
 
-**Never:**
-- Skip the Step 1 curation gate — yolo skips gates *between* steps, not within Step 1.
-- Use `AskUserQuestion` — every gate and fallback prompt is plain text with numbered options. Its countdown assumes a default; "which findings do I fix" and "may I force-push" must not be answerable by a timer.
-- Ask in the **same turn** as the 1c presentation **on the fallback path** — the report ends its own turn. On the primary path the blocking gate carries that guarantee.
-- Repeat finding detail in fallback prompt lines — it's in the write-up. Lines stay ID + severity + anchor + headline + verification flag.
-- Combine Recommended and Optional into one list **on the fallback path** — sequential prompts with opposite defaults. In the write-up they coexist, each block carrying its own `**Default:**`.
-- Treat silence as an answer — no reply means stop.
-- Skip a gate between Steps 1–3 **in gated mode**.
-- Treat anything other than `yolo`, `--yolo`, `auto`, `-y` as yolo — ask.
-- Skip the verification fan-out — buckets are only trustworthy once sub-agents have confirmed each finding.
-- Apply code-simplifier suggestions in yolo without a summary the user can scan.
-- Force-push without the squash skill's verification passing.
-- Prefix the title with `Draft:` or `WIP:` — use `--draft`.
-- Drop `--draft` or `--assignee @me` from the create command.
-- Invent a ticket number — `Closes <TICKET>` only when the reference appears in the branch name or commits.
-- Leave a literal `<TICKET>` placeholder in the description.
-- Narrate the implementation — the body comes from the diff, commits and ticket, never session memory.
-- Add a test-plan/QA-steps section to the body — the reviewer reads the diff and CI.
-- Retarget a stacked branch at `main` because the divergence check was skipped — 4a's gate holds in yolo.
-- Force-push with an unpinned `--force-with-lease` — 4a's fetch makes it authorise the overwrite it exists to prevent.
-- Build the reviewer flag as a string expanded unquoted (`$REVIEWER_FLAG`) — bash-only; zsh passes one argv element. Use an array plus `"${REVIEWER_FLAG[@]}"`.
+Each rule in the body carries its reason there. These are the ones it does not state:
 
-**Always:**
-- Detect and announce the yolo argument before starting.
-- Compute `BASE_SHA` as merge-base, never the remote target branch directly.
-- Dispatch verification sub-agents in parallel (single message, many tool calls).
-- Write per-finding prose blocks (`### F<n>[Rec|Skip] - <headline>` heading, then metadata line / Problem. / Why it bites. / Fix. / My read. / Default., `---` separated) under an overview table that comes **first** — [Finding write-up format](#finding-write-up-format).
-- Curate through the plannotator gate (`plannotator annotate "$(git rev-parse --absolute-git-dir)/review-<branch>.md" --gate --json`, path re-derived inline): `approved` applies every `**Default:**`, `dismissed` aborts, `annotated` overrides per finding, anything unrecognised aborts. Fall back to the two sequential numbered prompts only when `command -v plannotator` fails or the gate produces no payload.
-- Write the write-up to `$(git rev-parse --absolute-git-dir)/review-<branch>.md`, whatever the count — the terminal never carries the detail layer.
-- Classify Recommended (`issue_real ∈ {yes, partial}` AND `fix_sound != no` AND (severity ∈ {critical, high, medium} OR `**My read.**` is take at low/nit)) vs Optional (everything else shown); `fix_sound == risky` → Optional regardless of severity. Recommended → `[Rec]` + `take`, Optional → `[Skip]` + `skip`; the heading tag, `**My read.**` and `**Default:**` never contradict each other.
-- Keep verified false positives (`issue_real == no`) off the decision surface — no `**Default:**`, no prompt line — and name them in `dropped, and why`.
-- Commit each step's fixes before the next.
-- Use `$AI_SKILLS_MR_TOOL` (default `gh`) for creation.
-- Run lint and format before any commit (project-specific).
-- Run the full test suite exactly once, at Step 2 close — never earlier in this skill, and after squash only when squash resolved conflicts (its Step 5 rule).
-- Detect the target branch by divergence in 4a — never assume `${AI_SKILLS_TARGET_BRANCH:-main}`.
-- Pass `--draft` and `--assignee @me` on every invocation; add `--reviewer` only when `$AI_SKILLS_REVIEWERS` is non-empty.
-- Extract a ticket before drafting; if one exists, prepend `Closes <TICKET>`.
+- Ask every gate and fallback question in plain text with numbered options, never `AskUserQuestion`: its countdown assumes a default, and "which findings do I fix" and "may I force-push" must not be answerable by a timer.
+- Mark the MR draft with `--draft`, never with a `Draft:` or `WIP:` title prefix. Pass `--draft` and `--assignee @me` on every invocation; add `--reviewer` only when `$AI_SKILLS_REVIEWERS` is non-empty.
+- Leave no literal `<TICKET>` placeholder in the description.
+- Leave out a test-plan or QA-steps section; the reviewer reads the diff and CI.
+- Run lint and format before any commit (project-specific), and commit each step's fixes before the next.
 
 ## Finding write-up format
 
