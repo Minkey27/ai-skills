@@ -48,16 +48,13 @@ Before starting, verify ALL of these:
 
 ### Fetch latest main
 
-Ensure local `main` reflects the remote before rebasing:
+Rebase onto the remote `main`, not a local `main` that may be stale:
 
-```bash
-git fetch origin main:main
-```
-
-If this fails (e.g., because the current branch tracks `main`), fall back to:
 ```bash
 git fetch origin main
 ```
+
+Every later step uses `origin/main`. Fetching into local `main` (`main:main`) fails whenever `main` is checked out in another worktree.
 
 ### Tag the pre-rebase head
 
@@ -69,7 +66,7 @@ The tag is the recovery point and the baseline for **Diff Verification**. It out
 
 ## Rebase
 
-Run `git rebase main`.
+Run `git rebase origin/main`.
 
 - If no conflicts: proceed to **Diff Verification**.
 - If conflicts: proceed to **Conflict Resolution**.
@@ -100,8 +97,8 @@ Verify no changes were lost or mangled during the rebase:
 
 ```bash
 B="pre-rebase/$(git branch --show-current)"
-diff <(git diff -U0 main..."$B" | grep -v -E '^(@@|index )') \
-     <(git diff -U0 main...HEAD | grep -v -E '^(@@|index )')
+diff <(git diff -U0 origin/main..."$B" | grep -v -E '^(@@|index )') \
+     <(git diff -U0 origin/main...HEAD | grep -v -E '^(@@|index )')
 ```
 
 Line numbers and blob hashes are filtered out because they shift whenever main changed the same files.
@@ -138,7 +135,7 @@ If any `down_revision` points to a revision that is NOT another branch migration
 ### 2. Identify which migrations belong to this branch
 
 ```bash
-git log main..HEAD --oneline -- "$AI_SKILLS_MIGRATIONS_PATH/versions/"
+git log origin/main..HEAD --oneline -- "$AI_SKILLS_MIGRATIONS_PATH/versions/"
 ```
 
 This shows which migration files were added or modified on this branch. Cross-reference with:
@@ -249,7 +246,7 @@ git tag -d "pre-rebase/$(git branch --show-current)"
 
 | Mistake | Fix |
 |---------|-----|
-| Not fetching main first | Local main may be stale — always `git fetch origin main:main` |
+| Rebasing onto local main | Local main may be stale, so always `git fetch origin main` and rebase onto `origin/main` |
 | No recovery point | Always tag the head before starting |
 | Skipping diff verification | Silent conflict resolution errors are the #1 source of post-rebase bugs |
 | Running pytest directly | Always invoke the pytest-docker skill first |
