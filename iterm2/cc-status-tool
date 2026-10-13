@@ -1,9 +1,19 @@
 #!/bin/bash
 # iTerm2's cc-status, plus the detail line: the prompt or the latest tool while Claude works,
-# the session title once it stops.
+# the session title once it stops, followed by the git branch. Also sets user.gitBranch, for a tab
+# title that shows the branch.
 in=$(cat)
 printf '%s' "$in" | ~/.config/iterm2/cc-status
-if [ "$(jq -r .hook_event_name <<<"$in")" = Stop ]; then
+event=$(jq -r .hook_event_name <<<"$in")
+branch=$(git -C "$(jq -r .cwd <<<"$in")" branch --show-current 2>/dev/null)
+# Only a tool can switch branches, so PreToolUse skips this. `it2 set-var` doesn't stick for user
+# variables, so write iTerm2's SetUserVar escape sequence to the session's tty instead.
+if [ "$event" != PreToolUse ]; then
+  tty=$(/Applications/iTerm.app/Contents/Resources/utilities/it2 session get-var tty \
+    -s "${ITERM_SESSION_ID#*:}" | tr -d '"\\')
+  printf '\033]1337;SetUserVar=gitBranch=%s\007' "$(printf %s "$branch" | base64)" >"$tty"
+fi
+if [ "$event" = Stop ]; then
   detail=$(grep -h -E '"type":"(custom|ai)-title"' "$(jq -r .transcript_path <<<"$in")" 2>/dev/null |
     jq -rs '(map(select(.type == "custom-title")) | last | .customTitle) // (map(select(.type == "ai-title")) | last | .aiTitle) // empty')
   # No title yet: keep the reply preview cc-status just wrote.
@@ -12,4 +22,4 @@ else
   detail=$(jq -r '.prompt // ([.tool_name, (.tool_input.description // (.tool_input.file_path // "" | split("/") | last))] | map(select(length > 0)) | join(" · ")) | split("\n")[0] // ""' <<<"$in")
 fi
 /Applications/iTerm.app/Contents/Resources/utilities/it2 set-status \
-  -s "${ITERM_SESSION_ID#*:}" --detail "$detail" >/dev/null
+  -s "${ITERM_SESSION_ID#*:}" --detail "$detail${branch:+ [$branch]}" >/dev/null
