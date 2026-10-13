@@ -1,6 +1,6 @@
 ---
 name: mr-review
-description: "Reviews the GitLab MR of the currently checked-out branch and posts user-approved findings back as line-anchored diff notes. Works for the user's own MR or a teammate's. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't checked out. Supports `--dry-run`."
+description: "Reviews the GitLab MR of the currently checked-out branch and posts user-approved findings back as line-anchored diff notes. Works for the user's own MR or a teammate's. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't checked out. Supports `--dry-run`, and `--headless --mr-json <file> --out <dir>` for unattended callers: no `glab`, no questions, no posting; writes `review.md` + `findings.json`."
 disable-model-invocation: true
 ---
 
@@ -44,10 +44,13 @@ Ticket lookup also needs a tracker MCP in the session (Step 2); without one the 
 - **`Content-Type` header is mandatory** on `glab api ... --input -`; without it GitLab returns HTTP 415. Position-payload rules and a worked example: [references/glab-diff-notes.md](references/glab-diff-notes.md). Don't re-derive them.
 - **Verification sub-agents read the actual files** at the MR tip, not summaries — that is the only way to catch hallucinated or stale findings.
 - **Honor `--dry-run`** (`/mr-review --dry-run`, or "dry run" in the message): build the payloads, print them as the receipt, POST nothing.
+- **Honor `--headless`** (`/mr-review --headless --mr-json <path> --out <dir>`): an unattended caller that gates and posts itself. No `glab`, no questions, no gate, no posting; two files written, then stop. Where it conflicts with a rule above, [Headless mode](#headless-mode---headless) wins.
 
 ## Workflow
 
 ### 1. Detect the MR and load the diff
+
+**`--headless`:** no tool gate, no `glab mr view`, no `git fetch` — the MR comes from `--mr-json` and the guard compares `HEAD` with its `head_sha`; see [Headless mode](#headless-mode---headless).
 
 Gate on the tool:
 
@@ -104,7 +107,7 @@ Sources in order, stop at the first hit:
 1. **Branch name** — regex anywhere (`feat/PROJ-456-add-thing`, `andrew/PROJ-789-fix`).
 2. **MR title** — same regex, plus `[PROJ-123]` / `(PROJ-123)`.
 3. **MR description** — same regex, plus any tracker URL the MCP understands (`app.clickup.com/t/<id>`, `<org>.atlassian.net/browse/<id>`, `linear.app/<org>/issue/<id>`). The URL's id segment is a raw task id — pass it straight to the get-task tool.
-4. **Ask once**: "I couldn't find a ticket reference. Want to provide one, or proceed without?"
+4. **Ask once**: "I couldn't find a ticket reference. Want to provide one, or proceed without?" `--headless`: don't ask; proceed with "ticket unavailable".
 
 ClickUp fetch:
 
@@ -214,6 +217,8 @@ Aggregate into one table keyed by finding id.
 
 ### 7. Present findings, then the curation gate
 
+**`--headless`:** classify (7b) and build the 7a write-up as usual, but write it to `<out>/review.md`; no `$GITDIR` file, no hand-over, no 7c. See [Headless mode](#headless-mode---headless).
+
 **7a. Presentation.**
 
 **Classify first** (7b) — the bucket sets each block's `**Default:**` and the table's Bucket column.
@@ -304,6 +309,8 @@ Recommended → heading tag `[Rec]` and `**Default:** take`; Optional → headin
 Order by severity. Never mix buckets. No reply → stop; don't post.
 
 ### 8. Post the selected findings
+
+**`--headless`:** never reached — write the two output files and end; see [Headless mode](#headless-mode---headless).
 
 **Post through the `posting-mr-notes` skill** when it is installed: batch JSON, dry run, then **end the turn** on `Reply "post" to send N notes to MR !<iid>.` and post only after that reply. The gate's `approved` chooses the notes but does not authorize the post: it arrives in a background-task notification that tells the auto-mode classifier it is not user input, so posting on it alone gets denied.
 
@@ -422,6 +429,68 @@ catches it — the POST succeeded, so there is no failed request to notice.
 ```
 
 No finding object dump, no verification metadata (that's for you, not the MR audience). Write it for the author reading in the diff view: what is wrong, why it matters, the fix, nothing else.
+
+## Headless mode (--headless)
+
+```
+/mr-review --headless --mr-json <path/to/mr.json> --out <dir>
+```
+
+For an unattended caller: a local daemon running `claude -p --permission-mode dontAsk` in a detached worktree checked out at the MR head. It wants the review, the verification and the buckets; it gates and posts itself, from the files this mode writes. There is no `glab` and nobody to answer.
+
+**Never ask anything.** No `AskUserQuestion`, no plannotator, no plain-text question that waits for a reply. Where a step would ask, take the path below.
+
+| Step | Headless |
+|---|---|
+| 1 | Skip the tool gate, `glab mr view` and `git fetch` (the caller already fetched). The MR is `--mr-json`: the raw `glab api projects/<id>/merge_requests/<iid>` object, carrying every field Step 1 captures. The guard becomes `git rev-parse HEAD` == `diff_refs.head_sha` (detached HEAD is fine); mismatch → write nothing, end with the line `QUESTION: HEAD <x> != head_sha <y>`. The `git diff` runs as usual. |
+| 2 | Branch name is the JSON's `source_branch` (HEAD is detached). No ticket → don't ask; continue, "ticket unavailable". ClickUp lookup (`clickup_get_task` / `clickup_search`) still runs. |
+| 3–6 | Unchanged. |
+| 7 | Classify (7b) and build the 7a write-up as usual, written to `<out>/review.md`. No `$GITDIR` file, no terminal hand-over, no plannotator, no 7c. |
+| 8–9 | Don't run. Nothing is posted. |
+
+**Output** — exactly two files in `--out`, nothing written anywhere else:
+
+1. **`review.md`** — the 7a write-up: meta block, counts, `excluded, and why` lines, discrepancy report, overview table, finding blocks.
+2. **`findings.json`** — written **last**, after `review.md`, and only once complete: the caller reads its presence as "done". Every key present; `null` where one doesn't apply.
+
+```json
+{
+  "discrepancy": {"verdict": "⚠ needs attention (ticket unavailable)", "flags": ["..."]},
+  "findings": [{
+    "id": "F1",
+    "severity": "critical|high|medium|low|nit",
+    "bucket": "recommended|optional|excluded",
+    "exclude_reason": null,
+    "title": "short headline",
+    "file": "path/from/repo/root.py",
+    "line_start": 62,
+    "line_end": 62,
+    "verification": {"issue_real": "yes|no|partial", "fix_sound": "yes|no|risky", "flag": "verified as claimed", "notes": "..."},
+    "writeup": "**Problem.** … **Why it bites.** … **Fix.** … **My read.** …",
+    "note_body": "…",
+    "position": {"position_type": "text", "new_path": "...", "old_path": "...", "new_line": 62, "old_line": null}
+  }]
+}
+```
+
+- `discrepancy` — the Step 4 verdict exactly as in the `review.md` heading; `flags` are its bullets, `[]` on `✓ matches`.
+- `findings` — every finding, Excluded included, in id order. `title` is the heading's headline; `bucket` is the 7b bucket, lowercased; `exclude_reason` is the `excluded, and why` reason, `null` unless Excluded.
+- `line_start` / `line_end` — the verified lines (`corrected_lines` when Step 6 gave them). File-level → both `null` and `position: null`.
+- `verification` — Step 6's bare `issue_real` / `fix_sound` verdicts, the metadata line's delta flag, and the reasons plus any interaction in `notes`.
+- `writeup` — the finding block from `**Problem.**` through `**My read.**`, as in `review.md`: no `###` heading, metadata line or `**Default:**` line.
+- `note_body` — the diff-note body per [Body formatting for diff notes](#body-formatting-for-diff-notes).
+- `position` — the `position` Step 8 would build, per [references/glab-diff-notes.md](references/glab-diff-notes.md) (added → `new_line` only; removed → `old_line` only; context → both; a range adds `line_range`), **minus `base_sha` / `head_sha` / `start_sha`** — the caller adds them.
+- Excluded findings have no block and are never posted: `writeup` and `note_body` are `null`; `position` may be `null`.
+
+Write both files with the Write tool, not a shell heredoc — the bodies are full of quotes and backticks. In `findings.json`, JSON-escape the markdown strings (`\n`, `\"`, `\\`). Then check it parses:
+
+```bash
+python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "<out>/findings.json"
+```
+
+`dontAsk` denies anything not pre-allowed; if this is denied, re-read the file and check the escaping by eye. On any error, fix and rewrite.
+
+**End the turn** with one line of counts per bucket — `MR !<iid>: 2 recommended, 1 optional, 1 excluded → <out>`. Zero findings is valid: `review.md` still carries the discrepancy report, and `findings.json` has `"findings": []`.
 
 ## Failure modes
 
