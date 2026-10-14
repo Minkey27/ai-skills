@@ -142,7 +142,7 @@ In a scratch note (this conversation, not a file):
 - **MR description summary** — 2–3 bullets of what it claims.
 - **What the diff actually does** — 2–3 bullets from reading the diff.
 
-Flag: claims the diff doesn't deliver; substantial work the description omits; ticket and description disagreeing (when the ticket is trusted); the diff touching something the ticket scopes out. These are the **discrepancy report** — upstream of code review, never findings.
+Flag: claims the diff doesn't deliver; substantial work the description omits; ticket and description disagreeing (when the ticket is trusted); the diff touching something the ticket scopes out. These are the **discrepancy report**. Each flag also becomes a `D` finding in Step 5, so it can be curated and posted; the report keeps the verdict.
 
 **Verdict:** any flag → `⚠ needs attention`; none → `✓ matches`. Ticket unavailable (Step 2) or ignored (Step 3 Low) → append `(ticket unavailable)` / `(ticket ignored)`; the description-vs-diff comparison still runs and still sets the verdict.
 
@@ -174,13 +174,23 @@ The reviewer returns prose. Convert its `Issues` into the list below, mapping se
 
 No line numbers given → leave null and treat as file-level. Never invent them; guessed anchors produce wrong diff notes.
 
+**Discrepancy findings.** Append one finding per Step 4 flag, ids `D1`, `D2`, … after the reviewer's `F` findings, with `file`, `line_start` and `line_end` null. `issue` is the flag; `recommendation` is what would close it (change the code, or correct the description). Severity, and the label it gets in the [note body](#note-body):
+
+| Flag | Severity | Label |
+|---|---|---|
+| A ticket acceptance criterion the diff doesn't deliver | `medium` | `issue (blocking)` |
+| The description overclaims or omits work | `low` | `issue (non-blocking)` |
+| A missing manual check, an unticked test plan | `low` | `question (non-blocking)` |
+
+A `✓ matches` verdict has no flags and adds no `D` finding.
+
 ### 6. Fan out to verify findings
 
 **Group findings by file; one sub-agent per file**, in parallel (single message, many tool calls), `general-purpose` type, `model: sonnet` — a bounded read-and-judge task; the review pass stays on the session model for recall.
 
 Per file, not per finding: it collapses redundant reads, and — more important — **a recommendation is often only wrong next to another finding on the same file.** One false positive can be exactly what makes a second finding's cheap remedy wrong. A per-finding agent can't see that; task 3 asks for it.
 
-Findings with no `file` get one brief of their own. Cap a wave at ~8 sub-agents; more files → consecutive waves.
+Findings with no `file` get one brief of their own. A `D` finding's brief gives the MR description and, when trusted, the ticket goal and criteria instead of a file: the sub-agent checks the claim against them and the diff (`issue_real: no` when the code or the description already covers it), and names in `notes` any `F` finding that makes the same point. Cap a wave at ~8 sub-agents; more files → consecutive waves.
 
 ```
 Verify these code-review findings against the actual code on the current branch.
@@ -229,7 +239,7 @@ The file stands alone. In order:
 
 1. **Meta block** — MR title and number, commit range, file/line counts, ticket + confidence.
 2. **One-line count by severity**, then `excluded, and why` lines for every **Excluded** finding — not selectable, listed so nothing is silently dropped.
-3. **Discrepancy report** (Step 4) — the verdict on the MR as a whole; it calibrates trust in the table, so it precedes it. **Heading: `## Discrepancy report — <verdict>`**, the verdict from Step 4 — `## Discrepancy report — ⚠ needs attention`, `## Discrepancy report — ✓ matches (ticket unavailable)`. The heading is what a reader scanning the file sees; a mismatch buried in prose under a neutral heading gets skipped. Flags as bullets under it; `✓ matches` gets one line naming what was compared.
+3. **Discrepancy report** (Step 4) — the verdict on the MR as a whole; it calibrates trust in the table, so it precedes it. **Heading: `## Discrepancy report — <verdict>`**, the verdict from Step 4 — `## Discrepancy report — ⚠ needs attention`, `## Discrepancy report — ✓ matches (ticket unavailable)`. The heading is what a reader scanning the file sees; a mismatch buried in prose under a neutral heading gets skipped. Flags as bullets under it, each ending `→ D<n>`, the finding it became; `✓ matches` gets one line naming what was compared.
 4. **Overview table** — the scan layer and index. `ID` links to the finding's anchor. `Headline` repeats the heading's headline verbatim, so a row is readable without opening the block.
 
    ```
@@ -269,6 +279,8 @@ plannotator annotate "$(git rev-parse --absolute-git-dir)/mr-review-$(git rev-pa
 
 > **`partial` stays Recommended.** It usually means the bug is real but the reviewer's trigger diagnosis was wrong; the corrected diagnosis is what gets posted. Down-rating it would waste the verification.
 
+> **A `D` finding an `F` finding already covers → Optional,** whatever its severity, with the read `Skip: F<n> covers this`. The user can still take it or fold it.
+
 Recommended → heading tag `[Rec]` and `**Default:** take`; Optional → heading tag `[Skip]` and `**Default:** skip`; Excluded → no block, so no tag and no `**Default:**` line, not part of the decision surface.
 
 **7c. Read the gate's decision.**
@@ -282,8 +294,8 @@ Recommended → heading tag `[Rec]` and `**Default:** take`; Optional → headin
 
 `annotated` mapping:
 
-- Annotations anchor per block (paragraph, heading, list item); the `### F<n>[Rec|Skip]` heading is the intended target. Map by the `F<n>` token in anchor text or body — the tag is not part of the ID, and an annotation may contradict it.
-- Vocabulary: `take`, `skip`, `fold into F<n>` — case-insensitive. `fold into F<n>` = covered by F*n*; don't post separately, record as folded.
+- Annotations anchor per block (paragraph, heading, list item); the `### <id>[Rec|Skip]` heading is the intended target. Map by the finding id (`F<n>` or `D<n>`) in anchor text or body — the tag is not part of the ID, and an annotation may contradict it.
+- Vocabulary: `take`, `skip`, `fold into <id>` — case-insensitive. `fold into <id>` = covered by that finding; don't post separately, record as folded.
 - Text outside the vocabulary (a question, "wrong line range", a request for a new finding) applies **nothing**. Answer it, then re-gate on a **delta file** — `$GITDIR/mr-review-$SLUG-round<n>.md` holding only the new or changed blocks in full (metadata line, `**Default:**`, `---`) plus one line naming the untouched findings with their standing defaults. Never re-present the full write-up: the reader cannot tell what changed. Approve on the delta applies the standing defaults and the delta's own.
 - Can't map to exactly one finding → **ask**. Never guess, never fall back to the default.
 
@@ -343,7 +355,7 @@ Payload skeleton (full rules in [references/glab-diff-notes.md](references/glab-
 
 `line_start == line_end` → omit `line_range`. Ranges → both endpoints.
 
-**File-level findings** post as a general MR note:
+**File-level findings**, every `D` finding among them, post as a general MR note:
 
 ```bash
 glab mr note create <iid> --message "<body>"
@@ -484,7 +496,7 @@ For an unattended caller: a local daemon running `claude -p --permission-mode do
 ```
 
 - `discrepancy` — the Step 4 verdict exactly as in the `review.md` heading; `flags` are its bullets, `[]` on `✓ matches`.
-- `findings` — every finding, Excluded included, in id order. `title` is the heading's headline; `bucket` is the 7b bucket, lowercased; `exclude_reason` is the `excluded, and why` reason, `null` unless Excluded.
+- `findings` — every finding, Excluded included: the `F` findings in id order, then the `D` findings. `title` is the heading's headline; `bucket` is the 7b bucket, lowercased; `exclude_reason` is the `excluded, and why` reason, `null` unless Excluded.
 - `line_start` / `line_end` — the verified lines (`corrected_lines` when Step 6 gave them). File-level → both `null` and `position: null`.
 - `verification` — Step 6's bare `issue_real` / `fix_sound` verdicts, the metadata line's delta flag, and the reasons plus any interaction in `notes`.
 - `writeup` — the `**My read.**` text without its label: `Take: …` or `Skip: …`.
@@ -507,13 +519,13 @@ python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "<out>/findings.json"
 - **Tool doesn't resolve to `glab`** — stop, point at Config. Never attempt with `gh`; the diff-note API differs entirely.
 - **`glab mr view` returns nothing** — no MR. Suggest `glab mr create --draft` (omit `--reviewer` unless `$AI_SKILLS_REVIEWERS` is set) and stop.
 - **Local tip ≠ `diff_refs.head_sha`** — pull or push until they match; anchors and verification would otherwise target code the MR doesn't have. The Step 1 guard enforces this.
-- **Reviewer returns no findings** — valid. Still produce the discrepancy report; post nothing.
+- **Reviewer returns no findings** — valid. The discrepancy report and its `D` findings still go through curation.
 - **Tracker MCP unavailable** — proceed; note "ticket unavailable" in the discrepancy report.
 - **Invented line numbers** — `issue_real: no` because the cited line doesn't contain the cited problem is a hallucination, not a finding.
 
 ## Why this shape
 
-**Verification fan-out.** LLM reviewers pattern-match on diff text and over-trigger; verification catches that before the user filters 30 items by hand. **Discrepancy report.** Finding-level review misses "is this MR doing what it claims?" — often where the biggest issue is. The verdict lives in the heading because a report without one reads as background prose and gets skipped even when it flags a mismatch.
+**Verification fan-out.** LLM reviewers pattern-match on diff text and over-trigger; verification catches that before the user filters 30 items by hand. **Discrepancy report.** Finding-level review misses "is this MR doing what it claims?" — often where the biggest issue is. The verdict lives in the heading because a report without one reads as background prose and gets skipped even when it flags a mismatch. Each flag also becomes a `D` finding: a mismatch you can only read about never reaches the author.
 
 **Curation gate.** A report and its first prompt in one turn ask the user to curate findings they never read. A stopped turn proves the assistant stopped talking, not that anyone read anything; a blocking `plannotator annotate --gate` can't return until they have.
 
