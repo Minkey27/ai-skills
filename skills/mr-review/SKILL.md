@@ -1,6 +1,6 @@
 ---
 name: mr-review
-description: "Reviews the GitLab MR of the currently checked-out branch and posts user-approved findings back as line-anchored diff notes. Works for the user's own MR or a teammate's. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't checked out. Supports `--dry-run`, and `--headless --mr-json <file> --out <dir>` for unattended callers: no `glab`, no questions, no posting; writes `review.md` + `findings.json`."
+description: "Reviews the GitLab MR of the currently checked-out branch and posts user-approved findings back as line-anchored diff notes. Works for the user's own MR or a teammate's. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't checked out. Supports `--dry-run`, and `--headless --mr-json <file> --out <dir>` for unattended callers: no `glab`, no questions, no posting; writes `review.md` + `findings.json`. `--since <sha> --prior <file>` narrows a headless run to the commits after `<sha>`."
 disable-model-invocation: true
 ---
 
@@ -44,7 +44,7 @@ Ticket lookup also needs a tracker MCP in the session (Step 2); without one the 
 - **`Content-Type` header is mandatory** on `glab api ... --input -`; without it GitLab returns HTTP 415. Position-payload rules and a worked example: [references/glab-diff-notes.md](references/glab-diff-notes.md). Don't re-derive them.
 - **Verification sub-agents read the actual files** at the MR tip, not summaries — that is the only way to catch hallucinated or stale findings.
 - **Honor `--dry-run`** (`/mr-review --dry-run`, or "dry run" in the message): build the payloads, print them as the receipt, POST nothing.
-- **Honor `--headless`** (`/mr-review --headless --mr-json <path> --out <dir>`): an unattended caller that gates and posts itself. No `glab`, no questions, no gate, no posting; two files written, then stop. Where it conflicts with a rule above, [Headless mode](#headless-mode---headless) wins.
+- **Honor `--headless`** (`/mr-review --headless --mr-json <path> --out <dir> [--since <sha> --prior <file>]`): an unattended caller that gates and posts itself. No `glab`, no questions, no gate, no posting; two files written, then stop. Where it conflicts with a rule above, [Headless mode](#headless-mode---headless) wins.
 
 ## Workflow
 
@@ -455,7 +455,7 @@ Rules:
 ## Headless mode (--headless)
 
 ```
-/mr-review --headless --mr-json <path/to/mr.json> --out <dir>
+/mr-review --headless --mr-json <path/to/mr.json> --out <dir> [--since <sha> --prior <file>]
 ```
 
 For an unattended caller: a local daemon running `claude -p --permission-mode dontAsk` in a detached worktree checked out at the MR head. It wants the review, the verification and the buckets; it gates and posts itself, from the files this mode writes. There is no `glab` and nobody to answer.
@@ -513,6 +513,25 @@ python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "<out>/findings.json"
 `dontAsk` denies anything not pre-allowed; if this is denied, re-read the file and check the escaping by eye. On any error, fix and rewrite.
 
 **End the turn** with one line of counts per bucket — `MR !<iid>: 2 recommended, 1 optional, 1 excluded → <out>`. Zero findings is valid: `review.md` still carries the discrepancy report, and `findings.json` has `"findings": []`.
+
+### Only the new commits (`--since <sha> --prior <file>`)
+
+The caller already reviewed this MR up to `<sha>`; the author has since added commits on top. Review only those commits. The caller merges the result into the findings it already has.
+
+- **Both flags or neither.** One without the other → write nothing, end with `QUESTION: --since and --prior go together`.
+- **Step 1:** the guard and the full diff as usual. Also `git merge-base --is-ancestor <sha> HEAD`; on failure write nothing and end with `QUESTION: <sha> is not an ancestor of HEAD`.
+- **Step 4:** build the intent summary (the reviewer needs it); skip the discrepancy flags. No `D` findings.
+- **Step 5:** pass `BASE_SHA=<sha>` (not `diff_refs.base_sha`) and `HEAD_SHA=diff_refs.head_sha`. Add to `DESCRIPTION`: "Follow-up review: only the commits in `<sha>..HEAD`. The whole MR is `<diff_refs.base_sha>..HEAD`; read it for context, but report only issues on lines these commits added or changed. Already raised, don't repeat:" followed by one line per `--prior` finding: `<id> <title> (<file>:<line_start>)`.
+- **After Step 5:** drop a finding whose lines are outside the `<sha>..HEAD` diff, and one that raises the same issue as a `--prior` finding (same file and problem; its lines may have shifted). Number the rest `F<n+1>`, `F<n+2>`, … after the highest `F<n>` in `--prior`.
+- **Steps 6–7:** unchanged.
+- **`position`:** built from the full MR diff (`diff_refs.base_sha..head_sha`), as always: GitLab anchors notes against the whole MR, not the range.
+- **Output:** the same two files in `--out`. `discrepancy` is `{"verdict": "skipped (--since)", "flags": []}`; the `review.md` meta block names the range `<sha7>..<head7>`.
+
+`--prior` holds every finding the caller has, lines as of `<sha>`:
+
+```json
+{"findings": [{"id": "F3", "title": "…", "file": "a.go", "line_start": 12, "line_end": 14, "bucket": "recommended"}]}
+```
 
 ## Failure modes
 
