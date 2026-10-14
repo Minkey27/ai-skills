@@ -527,7 +527,7 @@ The caller already reviewed this MR up to `<sha>`; the author has since added co
 - **`position`:** built from the full MR diff (`diff_refs.base_sha..head_sha`), as always: GitLab anchors notes against the whole MR, not the range.
 - **Output:** the same two files in `--out`. `discrepancy` is `{"verdict": "skipped (--since)", "flags": []}`; the `review.md` meta block names the range `<sha7>..<head7>`.
 
-`--prior` holds every finding the caller has, lines as of `<sha>`:
+`--prior` holds every finding the caller has, lines as of an earlier head (they may have shifted):
 
 ```json
 {"findings": [{"id": "F3", "title": "…", "file": "a.go", "line_start": 12, "line_end": 14, "bucket": "recommended"}]}
