@@ -448,7 +448,7 @@ Rules:
 
 - **The lead line states the defect.** Label, then the headline as a sentence. A reader who stops there knows what is wrong and whether it blocks.
 - **One paragraph, no step lists.** Consequence last. When verification corrected the reviewer, state the corrected mechanism only; the correction itself goes in `**My read.**`. No runtime consequence → name who is misled and when. Never invent a failure mode.
-- **`**Fix:**` is actionable** — real code line, real helper, real fixture. Say when it's a pure test addition.
+- **`**Fix:**` is actionable** — real code line, real helper, real fixture. Say when it's a pure test addition. When verification found no sound fix, keep the line and say what a fix has to achieve ("lock on the scope key before the scope read") — never drop it.
 - **A `nitpick` may skip the paragraph**: lead line and `**Fix:**` only.
 - **Nothing reviewer-only**: no severity word, no verification metadata, no Take/Skip, no finding ids (`F3`, `D1`) — the author can't see them.
 
