@@ -322,7 +322,7 @@ Payload skeleton (full rules in [references/glab-diff-notes.md](references/glab-
 
 ```python
 {
-  "body": "<markdown finding body>",
+  "body": "<the finding's note body>",
   "position": {
     "position_type": "text",
     "base_sha":  "<diff_refs.base_sha>",
@@ -370,65 +370,75 @@ Restate the **Excluded** findings with their one-line reasons. Every finding end
 
 ## Finding write-up format
 
-The per-finding blocks in the write-up file (Step 7a). Not the diff-note body — that's the next section.
+The per-finding blocks in the write-up file (Step 7a). A block holds the reviewer's read and, quoted, the exact note that would be posted ([Note body](#note-body)).
 
 ```markdown
-### F4[Rec] - applyAdjustFrame derefs state that can be nulled mid-POST
-`medium` · `floorplan-editor.js:1543` · verification **verified as claimed**
+### F1[Rec] - Refused offerte accept still commits the vastgesteld ijkpunt
+`medium` · `offerte_versie_repository.py:275` · verification **verified as claimed**
 
-**Problem.** `applyAdjustFrame` awaits the POST at line 1508. `adjustMode` stays `true`
-for that whole await, so anything that calls `cancelAdjust()` during it — Escape (2901),
-`setDrawMode('pan')` (531), the page-change branch (1256) — runs `_exitAdjust()` and nulls
-`adjustHandles`. Phase 2 then hits 1543 `adjustHandles.a.slice()` and throws. Pre-branch
-that deref sat inside `if (frame)`; this branch hoisted it out.
+**My read.** Take: the MR claims every route rolls back; this one doesn't. Flag is off in prod.
 
-**Why it bites.** The throw lands *after* the server persisted, so `loadDoors()` never
-runs and the canvas shows pre-alignment geometry for data that is already saved. Nothing
-catches it — the POST succeeded, so there is no failed request to notice.
+> **issue (blocking):** A refused offerte accept still commits the vastgesteld ijkpunt.
+>
+> `service.accept` saves the ijkpunt (`offerte_versie_service.py:247`) before the versie
+> save, which this MR makes refuse a closed-only versie. `offerte_versie_accept` catches
+> that refusal inside `get_request_uow` (`handlers.py:508`) and returns a 303, so the UoW
+> commits the ijkpunt anyway. Every refused accept (second tab, back-button resubmit)
+> leaves an extra price point that verantwoording can pick.
+>
+> **Fix:** move the `try/except BusinessRuleViolationError` outside
+> `async with get_request_uow(request)`. Reordering the service alone is not enough.
 
-**Fix.** Two edits in `floorplan-editor.js`:
-- Snapshot both objects into locals before the Phase-1 await and use the snapshots in
-  Phase 2: `const sentA = adjustHandles.a.slice(), sentB = adjustHandles.b.slice();`
-- Reset `applyBtn.disabled = false` where the adjust toolbar is re-shown, so a session
-  cancelled mid-flight doesn't leave the button dead.
-
-**My read.** Take it — small, and it's a regression this branch introduced.
-
-**Default:** take — annotate this block with `skip` to drop it, or `fold into F<n>`.
+**Default:** take — annotate this block with `skip` to drop it, or `fold into <id>`.
 
 ---
 ```
 
 **Rules:**
 
-- **Heading: `### F<n>[Rec|Skip] - <headline>`.** ID, recommendation tag, headline — nothing else. The tag is the bucket from 7b: `[Rec]` for Recommended, `[Skip]` for Optional, so the call is readable from the outline without opening the block. The heading is also the table's link target and the annotation anchor; a 120-character headline fails all three jobs.
+- **Heading: `### <id>[Rec|Skip] - <headline>`.** ID, recommendation tag, headline — nothing else. The tag is the bucket from 7b: `[Rec]` for Recommended, `[Skip]` for Optional, so the call is readable from the outline without opening the block. The heading is also the table's link target and the annotation anchor; a 120-character headline fails all three jobs.
 - **One metadata line under the heading**, `·`-separated, in order: severity, anchor(s) as code spans, verification delta flag.
   - Bucket does not repeat here — the heading tag carries it.
   - Anchors are code spans (`` `services.py:120` ``); chain with `→` when the fix spans two places. No line → `(file-level)` or the path it concerns, matching the table's Anchor column.
   - Delta flag: 2–4 words as `verification **<flag>**` — label plain, flag bold. Typical: verified as claimed, corrected the remedy, inverted the diagnosis, widened the line range, downgraded to partial; coin one when none fits.
-- **`**Problem.**` — mechanism only, ~6 lines**: trigger, sequence, resulting state, `file:line` cited inline. Quotes and code go to `**Fix.**`; provenance ("this branch hoisted it out") goes to `**My read.**`. `inverted the diagnosis` / `corrected the remedy` carry two mechanisms, so ~8 lines; never meet the cap by dropping the correction.
-- **`**Why it bites.**` — required, separate**, 1–2 sentences: the user-visible consequence and what fails to catch it. No runtime consequence → name who is misled and when. Never invent a failure mode.
-- **Run-on bold lead-ins** ending in a period, prose on the same line. Never `**Issue:** <one line>`.
-- **`**Fix.**` is actionable** — bullet per edit when more than one; real code line, real helper, real fixture. Say when it's a pure test addition.
-- **No `**Verification:**` badge line.** Corrections are woven into the prose in your own voice ("Important correction to the original recommendation: …", "Verification downgraded this to partial: …"). The delta flag indexes that prose; it carries no reasoning. Full verdicts live in the table.
-- **`**My read.**` — one sentence**: take / skip / fold into F*n*, only when not obvious from the block. A second sentence only when it changes *handling* — outside the diff's hunks, or wider than this branch.
+- **`**My read.**` is for the user only — never posted.** `Take:` or `Skip:`, then one sentence why. A second sentence only when verification corrected the reviewer ("Verification inverted the diagnosis: …") or the fix lies outside the diff's hunks or wider than this branch.
+- **The note, quoted**: the finding's [note body](#note-body) verbatim, `> ` on every line and `>` on blank ones. The reader sees exactly what gets posted.
 - **`**Default:**` is the last line** before the separator: the disposition that applies on silence and the words that override it. Recommended → `take`; Optional → `skip`. The gate reads this.
-- **Heading tag, `**My read.**` and `**Default:**` agree** — `[Rec]` ⇔ take ⇔ Recommended, `[Skip]` ⇔ skip ⇔ Optional. A `take` read at `low`/`nit` is the Recommended criterion for that severity (7b), so bucket it Recommended and tag it `[Rec]`. A `take` read on a `risky` fix is the read being wrong — precedence keeps the bucket Optional, so the read becomes `skip` with the caveat named. When the three disagree at write time, one of them is wrong; fix it before the next block.
+- **Heading tag, `**My read.**` and `**Default:**` agree** — `[Rec]` ⇔ `Take:` ⇔ take ⇔ Recommended, `[Skip]` ⇔ `Skip:` ⇔ skip ⇔ Optional. A `Take:` read at `low`/`nit` is the Recommended criterion for that severity (7b), so bucket it Recommended and tag it `[Rec]`. A `Take:` read on a `risky` fix is the read being wrong — precedence keeps the bucket Optional, so the read becomes `Skip:` with the caveat named. When the three disagree at write time, one of them is wrong; fix it before the next block.
 - **`---` between every finding**, including within a cluster.
 - **Cluster when findings share a mechanism**: `## Cluster A — <the mechanism>` plus one line on how they interact ("F1's write-back closes F6"). Every finding inside keeps its full block, metadata line, `**Default:**` and `---`.
 - **Overview table first** — after the counts and excluded lines, before the clusters; it covers every finding.
 
-## Body formatting for diff notes
+## Note body
+
+The text posted to GitLab, and the only description of a finding: the write-up quotes it, `findings.json` carries it as `note_body`, battlestation shows and posts it. Written for the author reading in the diff view.
 
 ```markdown
-**<short title>** — severity: <critical|high|medium|low|nit>
+**<label>:** <the headline as one full sentence>
 
-<issue paragraph: what's wrong and why it matters>
+<one paragraph, ~4 sentences: the trigger, what happens, and last the consequence the
+author or a user would see. `file:line` as code spans.>
 
-**Suggested fix:** <recommendation in 1–3 sentences>
+**Fix:** <one or two sentences; a bullet per edit when more than one>
 ```
 
-No finding object dump, no verification metadata (that's for you, not the MR audience). Write it for the author reading in the diff view: what is wrong, why it matters, the fix, nothing else.
+Labels follow [Conventional Comments](https://conventionalcomments.org/), set by the severity:
+
+| When | Label |
+|---|---|
+| Something is wrong now, `critical` / `high` / `medium` | `issue (blocking)` |
+| Something is wrong now, `low` | `issue (non-blocking)` |
+| Works but could be better (missing test, stale doc) | `suggestion (blocking)` at `medium` and up, `suggestion (non-blocking)` at `low` |
+| `nit` | `nitpick` |
+| A question only the author can answer | `question (non-blocking)` |
+
+Rules:
+
+- **The lead line states the defect.** Label, then the headline as a sentence. A reader who stops there knows what is wrong and whether it blocks.
+- **One paragraph, no step lists.** Consequence last. When verification corrected the reviewer, state the corrected mechanism only; the correction itself goes in `**My read.**`. No runtime consequence → name who is misled and when. Never invent a failure mode.
+- **`**Fix:**` is actionable** — real code line, real helper, real fixture. Say when it's a pure test addition.
+- **A `nitpick` may skip the paragraph**: lead line and `**Fix:**` only.
+- **Nothing reviewer-only**: no severity word, no verification metadata, no Take/Skip, no finding ids (`F3`, `D1`) — the author can't see them.
 
 ## Headless mode (--headless)
 
@@ -466,7 +476,7 @@ For an unattended caller: a local daemon running `claude -p --permission-mode do
     "line_start": 62,
     "line_end": 62,
     "verification": {"issue_real": "yes|no|partial", "fix_sound": "yes|no|risky", "flag": "verified as claimed", "notes": "..."},
-    "writeup": "**Problem.** … **Why it bites.** … **Fix.** … **My read.** …",
+    "writeup": "Take: …",
     "note_body": "…",
     "position": {"position_type": "text", "new_path": "...", "old_path": "...", "new_line": 62, "old_line": null}
   }]
@@ -477,8 +487,8 @@ For an unattended caller: a local daemon running `claude -p --permission-mode do
 - `findings` — every finding, Excluded included, in id order. `title` is the heading's headline; `bucket` is the 7b bucket, lowercased; `exclude_reason` is the `excluded, and why` reason, `null` unless Excluded.
 - `line_start` / `line_end` — the verified lines (`corrected_lines` when Step 6 gave them). File-level → both `null` and `position: null`.
 - `verification` — Step 6's bare `issue_real` / `fix_sound` verdicts, the metadata line's delta flag, and the reasons plus any interaction in `notes`.
-- `writeup` — the finding block from `**Problem.**` through `**My read.**`, as in `review.md`: no `###` heading, metadata line or `**Default:**` line.
-- `note_body` — the diff-note body per [Body formatting for diff notes](#body-formatting-for-diff-notes).
+- `writeup` — the `**My read.**` text without its label: `Take: …` or `Skip: …`.
+- `note_body` — the [note body](#note-body), exactly as the write-up quotes it.
 - `position` — the `position` Step 8 would build, per [references/glab-diff-notes.md](references/glab-diff-notes.md) (added → `new_line` only; removed → `old_line` only; context → both; a range adds `line_range`), **minus `base_sha` / `head_sha` / `start_sha`** — the caller adds them.
 - Excluded findings have no block and are never posted: `writeup` and `note_body` are `null`; `position` may be `null`.
 
