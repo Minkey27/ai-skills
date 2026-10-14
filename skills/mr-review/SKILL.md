@@ -142,7 +142,7 @@ In a scratch note (this conversation, not a file):
 - **MR description summary** — 2–3 bullets of what it claims.
 - **What the diff actually does** — 2–3 bullets from reading the diff.
 
-Flag: claims the diff doesn't deliver; substantial work the description omits; ticket and description disagreeing (when the ticket is trusted); the diff touching something the ticket scopes out. These are the **discrepancy report**. Each flag also becomes a `D` finding in Step 5, so it can be curated and posted; the report keeps the verdict.
+Flag: claims the diff doesn't deliver (a ticket acceptance criterion, or a claim in the description); substantial work the description omits; ticket and description disagreeing (when the ticket is trusted); the diff touching something the ticket scopes out; an unticked test plan, or a manual check the description promises but doesn't record. These are the **discrepancy report**. Each flag also becomes a `D` finding in Step 5, so it can be curated and posted; the report keeps the verdict.
 
 **Verdict:** any flag → `⚠ needs attention`; none → `✓ matches`. Ticket unavailable (Step 2) or ignored (Step 3 Low) → append `(ticket unavailable)` / `(ticket ignored)`; the description-vs-diff comparison still runs and still sets the verdict.
 
@@ -179,8 +179,8 @@ No line numbers given → leave null and treat as file-level. Never invent them;
 | Flag | Severity | Label |
 |---|---|---|
 | A ticket acceptance criterion the diff doesn't deliver | `medium` | `issue (blocking)` |
-| The description overclaims or omits work | `low` | `issue (non-blocking)` |
-| A missing manual check, an unticked test plan | `low` | `question (non-blocking)` |
+| Something the description claims that the diff doesn't deliver, work it omits, ticket and description that disagree, a change the ticket scopes out | `low` | `issue (non-blocking)` |
+| An unticked test plan, a missing manual check | `low` | `question (non-blocking)` |
 
 A `✓ matches` verdict has no flags and adds no `D` finding.
 
@@ -190,7 +190,7 @@ A `✓ matches` verdict has no flags and adds no `D` finding.
 
 Per file, not per finding: it collapses redundant reads, and — more important — **a recommendation is often only wrong next to another finding on the same file.** One false positive can be exactly what makes a second finding's cheap remedy wrong. A per-finding agent can't see that; task 3 asks for it.
 
-Findings with no `file` get one brief of their own. A `D` finding's brief gives the MR description and, when trusted, the ticket goal and criteria instead of a file: the sub-agent checks the claim against them and the diff (`issue_real: no` when the code or the description already covers it), and names in `notes` any `F` finding that makes the same point. Cap a wave at ~8 sub-agents; more files → consecutive waves.
+Findings with no `file` get one brief of their own. A `D` finding's brief gives the MR description and, when trusted, the ticket goal and criteria instead of a file: the sub-agent checks the claim against them and the diff (`issue_real: no` when the code or the description already covers it). The brief also lists every `F` finding (id, title and anchor), and the sub-agent names in `notes` any that makes the same point. Cap a wave at ~8 sub-agents; more files → consecutive waves.
 
 ```
 Verify these code-review findings against the actual code on the current branch.
@@ -294,7 +294,7 @@ Recommended → heading tag `[Rec]` and `**Default:** take`; Optional → headin
 
 `annotated` mapping:
 
-- Annotations anchor per block (paragraph, heading, list item); the `### <id>[Rec|Skip]` heading is the intended target. Map by the finding id (`F<n>` or `D<n>`) in anchor text or body — the tag is not part of the ID, and an annotation may contradict it.
+- Annotations anchor per block (paragraph, heading, list item); the `### <id>[Rec|Skip]` heading is the intended target. Map each annotation to the finding whose heading it sits under: find its anchor text in the write-up file and take the nearest `### <id>` above it. Ids inside a block (`Skip: F2 covers this`, the quoted note) are references, not targets. The tag is not part of the ID, and an annotation may contradict it.
 - Vocabulary: `take`, `skip`, `fold into <id>` — case-insensitive. `fold into <id>` = covered by that finding; don't post separately, record as folded.
 - Text outside the vocabulary (a question, "wrong line range", a request for a new finding) applies **nothing**. Answer it, then re-gate on a **delta file** — `$GITDIR/mr-review-$SLUG-round<n>.md` holding only the new or changed blocks in full (metadata line, `**Default:**`, `---`) plus one line naming the untouched findings with their standing defaults. Never re-present the full write-up: the reader cannot tell what changed. Approve on the delta applies the standing defaults and the delta's own.
 - Can't map to exactly one finding → **ask**. Never guess, never fall back to the default.
