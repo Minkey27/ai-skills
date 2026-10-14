@@ -174,7 +174,7 @@ The reviewer returns prose. Convert its `Issues` into the list below, mapping se
 
 No line numbers given → leave null and treat as file-level. Never invent them; guessed anchors produce wrong diff notes.
 
-**Discrepancy findings.** Append one finding per Step 4 flag, ids `D1`, `D2`, … after the reviewer's `F` findings, with `file`, `line_start` and `line_end` null. `issue` is the flag; `recommendation` is what would close it (change the code, or correct the description). Severity, and the label it gets in the [note body](#note-body):
+**Discrepancy findings.** Append one finding per Step 4 flag, ids `D1`, `D2`, … after the reviewer's `F` findings, with `file`, `line_start` and `line_end` null. `title` is the flag as a short headline; `issue` is the flag; `recommendation` is what would close it (change the code, or correct the description). Severity, and the label it gets in the [note body](#note-body):
 
 | Flag | Severity | Label |
 |---|---|---|
@@ -239,7 +239,7 @@ The file stands alone. In order:
 
 1. **Meta block** — MR title and number, commit range, file/line counts, ticket + confidence.
 2. **One-line count by severity**, then `excluded, and why` lines for every **Excluded** finding — not selectable, listed so nothing is silently dropped.
-3. **Discrepancy report** (Step 4) — the verdict on the MR as a whole; it calibrates trust in the table, so it precedes it. **Heading: `## Discrepancy report — <verdict>`**, the verdict from Step 4 — `## Discrepancy report — ⚠ needs attention`, `## Discrepancy report — ✓ matches (ticket unavailable)`. The heading is what a reader scanning the file sees; a mismatch buried in prose under a neutral heading gets skipped. Flags as bullets under it, each ending `→ D<n>`, the finding it became; `✓ matches` gets one line naming what was compared.
+3. **Discrepancy report** (Step 4) — the verdict on the MR as a whole; it calibrates trust in the table, so it precedes it. **Heading: `## Discrepancy report — <verdict>`**, the verdict from Step 4 — `## Discrepancy report — ⚠ needs attention`, `## Discrepancy report — ✓ matches (ticket unavailable)`. The heading is what a reader scanning the file sees; a mismatch buried in prose under a neutral heading gets skipped. Flags as bullets under it, each ending `→ D<n>`, the finding it became; `✓ matches` gets one line naming what was compared. A flag whose `D` finding Step 6 refuted (Excluded) is dropped from the report, and the verdict follows the flags left: none left → `✓ matches`.
 4. **Overview table** — the scan layer and index. `ID` links to the finding's anchor. `Headline` repeats the heading's headline verbatim, so a row is readable without opening the block.
 
    ```
@@ -307,7 +307,7 @@ Recommended → heading tag `[Rec]` and `**Default:** take`; Optional → headin
 
 1. Print the absolute path, severity count, discrepancy report, overview table, `excluded, and why` lines. **Then END YOUR TURN** — a message that asks nothing. "Before" is a turn boundary, not text order.
 2. In a *later* turn, two sequential numbered plain-text prompts. Prompt 1: Recommended only, default all, reply with numbers to drop; **wait**. Prompt 2: Optional only, default none unless named; skip when empty.
-3. One line per finding: `[F3 medium] auth/repositories.py:128 — every dropdown click rewrites user_roles` plus a verification flag in parentheses where one applies.
+3. One line per finding: `[F3 medium] auth/repositories.py:128 — every dropdown click rewrites user_roles` plus a verification flag in parentheses where one applies. A `D` finding: `[D1 low] MR description — description says stacked branches are handled`.
 
 ```markdown
 **Recommended — 4 findings.** Default is all of them. Reply with numbers to drop, or "go".
@@ -411,7 +411,7 @@ The per-finding blocks in the write-up file (Step 7a). A block holds the reviewe
 - **Heading: `### <id>[Rec|Skip] - <headline>`.** ID, recommendation tag, headline — nothing else. The tag is the bucket from 7b: `[Rec]` for Recommended, `[Skip]` for Optional, so the call is readable from the outline without opening the block. The heading is also the table's link target and the annotation anchor; a 120-character headline fails all three jobs.
 - **One metadata line under the heading**, `·`-separated, in order: severity, anchor(s) as code spans, verification delta flag.
   - Bucket does not repeat here — the heading tag carries it.
-  - Anchors are code spans (`` `services.py:120` ``); chain with `→` when the fix spans two places. No line → `(file-level)` or the path it concerns, matching the table's Anchor column.
+  - Anchors are code spans (`` `services.py:120` ``); chain with `→` when the fix spans two places. No line → `(file-level)` or the path it concerns; a `D` finding → `(MR description)`. Match the table's Anchor column.
   - Delta flag: 2–4 words as `verification **<flag>**` — label plain, flag bold. Typical: verified as claimed, corrected the remedy, inverted the diagnosis, widened the line range, downgraded to partial; coin one when none fits.
 - **`**My read.**` is for the user only — never posted.** `Take:` or `Skip:`, then one sentence why. A second sentence only when verification corrected the reviewer ("Verification inverted the diagnosis: …") or the fix lies outside the diff's hunks or wider than this branch.
 - **The note, quoted**: the finding's [note body](#note-body) verbatim, `> ` on every line and `>` on blank ones. The reader sees exactly what gets posted.
@@ -495,7 +495,7 @@ For an unattended caller: a local daemon running `claude -p --permission-mode do
 }
 ```
 
-- `discrepancy` — the Step 4 verdict exactly as in the `review.md` heading; `flags` are its bullets, `[]` on `✓ matches`.
+- `discrepancy` — the Step 4 verdict exactly as in the `review.md` heading; `flags` are its bullets without the `→ D<n>` suffix, `[]` on `✓ matches`.
 - `findings` — every finding, Excluded included: the `F` findings in id order, then the `D` findings. `title` is the heading's headline; `bucket` is the 7b bucket, lowercased; `exclude_reason` is the `excluded, and why` reason, `null` unless Excluded.
 - `line_start` / `line_end` — the verified lines (`corrected_lines` when Step 6 gave them). File-level → both `null` and `position: null`.
 - `verification` — Step 6's bare `issue_real` / `fix_sound` verdicts, the metadata line's delta flag, and the reasons plus any interaction in `notes`.
@@ -519,7 +519,7 @@ python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "<out>/findings.json"
 - **Tool doesn't resolve to `glab`** — stop, point at Config. Never attempt with `gh`; the diff-note API differs entirely.
 - **`glab mr view` returns nothing** — no MR. Suggest `glab mr create --draft` (omit `--reviewer` unless `$AI_SKILLS_REVIEWERS` is set) and stop.
 - **Local tip ≠ `diff_refs.head_sha`** — pull or push until they match; anchors and verification would otherwise target code the MR doesn't have. The Step 1 guard enforces this.
-- **Reviewer returns no findings** — valid. The discrepancy report and its `D` findings still go through curation.
+- **Reviewer returns no findings** — valid. With `✓ matches` there is nothing to curate: write the report, post nothing. Otherwise the `D` findings go through curation.
 - **Tracker MCP unavailable** — proceed; note "ticket unavailable" in the discrepancy report.
 - **Invented line numbers** — `issue_real: no` because the cited line doesn't contain the cited problem is a hallucination, not a finding.
 
