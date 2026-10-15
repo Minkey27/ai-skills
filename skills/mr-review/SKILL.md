@@ -281,6 +281,8 @@ plannotator annotate "$(git rev-parse --absolute-git-dir)/mr-review-$(git rev-pa
 
 > **A `D` finding an `F` finding already covers → Optional,** whatever its severity, with the read `Skip: F<n> covers this`. The user can still take it or fold it.
 
+> **An unticked test plan or a missing manual check → Optional,** with the read `Skip: the author's own check; nothing for the reviewer to act on`. An open box such as "manual click-through" is the author's to tick; the user can still take it.
+
 Recommended → heading tag `[Rec]` and `**Default:** take`; Optional → heading tag `[Skip]` and `**Default:** skip`; Excluded → no block, so no tag and no `**Default:**` line, not part of the decision surface.
 
 **7c. Read the gate's decision.**
