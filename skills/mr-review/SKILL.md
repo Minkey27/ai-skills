@@ -468,43 +468,46 @@ For an unattended caller: a local daemon running `claude -p --permission-mode do
 |---|---|
 | 1 | Skip the tool gate, `glab mr view` and `git fetch` (the caller already fetched). The MR is `--mr-json`: the raw `glab api projects/<id>/merge_requests/<iid>` object, carrying every field Step 1 captures. The guard becomes `git rev-parse HEAD` == `diff_refs.head_sha` (detached HEAD is fine); mismatch → write nothing, end with the line `QUESTION: HEAD <x> != head_sha <y>`. The `git diff` runs as usual. |
 | 2 | Branch name is the JSON's `source_branch` (HEAD is detached). No ticket → don't ask; continue, "ticket unavailable". ClickUp lookup (`clickup_get_task` / `clickup_search`) still runs. |
-| 3–6 | Unchanged. |
-| 7 | Classify (7b) and build the 7a write-up as usual, written to `<out>/review.md`. No `$GITDIR` file, no terminal hand-over, no plannotator, no 7c. |
+| 3 | Unchanged. |
+| 4 | Build the intent summary (the reviewer needs it); skip the discrepancy flags and `D` findings. The caller runs its own description check. |
+| 5–6 | Unchanged. |
+| 7 | Classify (7b) and build the 7a write-up as usual, without the discrepancy report, written to `<out>/review.md`. No `$GITDIR` file, no terminal hand-over, no plannotator, no 7c. |
 | 8–9 | Don't run. Nothing is posted. |
 
 **Output** — exactly two files in `--out`, nothing written anywhere else:
 
-1. **`review.md`** — the 7a write-up: meta block, counts, `excluded, and why` lines, discrepancy report, overview table, finding blocks.
-2. **`findings.json`** — written **last**, after `review.md`, and only once complete: the caller reads its presence as "done". Every key present; `null` where one doesn't apply.
+1. **`review.md`** — the 7a write-up: meta block, counts, `excluded, and why` lines, overview table, finding blocks.
+2. **`findings.json`** — written **last**, after `review.md`, and only once complete: the caller reads it when the turn ends and sends back once what it refuses. Every key present; `null` where one doesn't apply. The caller's contract: `internal/app/prompts/findings-format.md` in battlestation.
 
 ```json
 {
-  "discrepancy": {"verdict": "⚠ needs attention (ticket unavailable)", "flags": ["..."]},
+  "spec": 1,
+  "summary": "Two or three sentences: what the MR gets right and what blocks it.",
   "findings": [{
-    "id": "F1",
     "severity": "critical|high|medium|low|nit",
     "bucket": "recommended|optional|excluded",
     "exclude_reason": null,
     "title": "short headline",
     "file": "path/from/repo/root.py",
+    "side": "new",
     "line_start": 62,
     "line_end": 62,
     "verification": {"issue_real": "yes|no|partial", "fix_sound": "yes|no|risky", "flag": "verified as claimed", "notes": "..."},
     "writeup": "Take: …",
-    "note_body": "…",
-    "position": {"position_type": "text", "new_path": "...", "old_path": "...", "new_line": 62, "old_line": null}
+    "note_body": "…"
   }]
 }
 ```
 
-- `discrepancy` — the Step 4 verdict exactly as in the `review.md` heading; `flags` are its bullets without the `→ D<n>` suffix, `[]` on `✓ matches`.
-- `findings` — every finding, Excluded included: the `F` findings in id order, then the `D` findings. `title` is the heading's headline; `bucket` is the 7b bucket, lowercased; `exclude_reason` is the `excluded, and why` reason, `null` unless Excluded.
-- `line_start` / `line_end` — the verified lines (`corrected_lines` when Step 6 gave them). File-level → both `null` and `position: null`.
+- `spec` — always `1`.
+- `summary` — two or three sentences: what the MR gets right and what blocks it. Shown on battlestation's Overview, never posted.
+- `findings` — every `F` finding, Excluded included, in id order and without ids: battlestation numbers them `F1`, `F2`, … in that order (after the `--prior` ones with `--since`), so `review.md`'s ids match. `title` is the heading's headline; `bucket` is the 7b bucket, lowercased; `exclude_reason` is the `excluded, and why` reason, `null` unless Excluded.
+- `line_start` / `line_end` — the verified lines (`corrected_lines` when Step 6 gave them). File-level → both `null`.
+- `side` — `new` when the lines are added or unchanged (numbers of the new file), `old` when they are removed (numbers of the old file). Battlestation builds the GitLab position from `file`, `side` and the lines; lines outside the diff post as a general comment.
 - `verification` — Step 6's bare `issue_real` / `fix_sound` verdicts, the metadata line's delta flag, and the reasons plus any interaction in `notes`.
 - `writeup` — the `**My read.**` text without its label: `Take: …` or `Skip: …`.
 - `note_body` — the [note body](#note-body), exactly as the write-up quotes it.
-- `position` — the `position` Step 8 would build, per [references/glab-diff-notes.md](references/glab-diff-notes.md) (added → `new_line` only; removed → `old_line` only; context → both; a range adds `line_range`), **minus `base_sha` / `head_sha` / `start_sha`** — the caller adds them.
-- Excluded findings have no block and are never posted: `writeup` and `note_body` are `null`; `position` may be `null`.
+- Excluded findings have no block and are never posted: `writeup` and `note_body` are `null`.
 
 Write both files with the Write tool, not a shell heredoc — the bodies are full of quotes and backticks. In `findings.json`, JSON-escape the markdown strings (`\n`, `\"`, `\\`). Then check it parses:
 
@@ -514,7 +517,7 @@ python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "<out>/findings.json"
 
 `dontAsk` denies anything not pre-allowed; if this is denied, re-read the file and check the escaping by eye. On any error, fix and rewrite.
 
-**End the turn** with one line of counts per bucket — `MR !<iid>: 2 recommended, 1 optional, 1 excluded → <out>`. Zero findings is valid: `review.md` still carries the discrepancy report, and `findings.json` has `"findings": []`.
+**End the turn** with one line of counts per bucket — `MR !<iid>: 2 recommended, 1 optional, 1 excluded → <out>`. Zero findings is valid: `findings.json` has `"findings": []`.
 
 ### Only the new commits (`--since <sha> --prior <file>`)
 
@@ -527,7 +530,7 @@ The caller already reviewed this MR up to `<sha>`; the author has since added co
 - **After Step 5:** drop a finding whose lines are outside the `<sha>..HEAD` diff, and one that raises the same issue as a `--prior` finding (same file and problem; its lines may have shifted). Number the rest `F<n+1>`, `F<n+2>`, … after the highest `F<n>` in `--prior`.
 - **Steps 6–7:** unchanged.
 - **`position`:** built from the full MR diff (`diff_refs.base_sha..head_sha`), as always: GitLab anchors notes against the whole MR, not the range.
-- **Output:** the same two files in `--out`. `discrepancy` is `{"verdict": "skipped (--since)", "flags": []}`; the `review.md` meta block names the range `<sha7>..<head7>`.
+- **Output:** the same two files in `--out`; `summary` covers only the new commits, and the `review.md` meta block names the range `<sha7>..<head7>`.
 
 `--prior` holds every finding the caller has, lines as of an earlier head (they may have shifted):
 
