@@ -68,7 +68,7 @@ digraph finalize {
     node [shape=box];
 
     preflight [label="Pre-flight checks"];
-    review [label="Step 1: superpowers:requesting-code-review"];
+    review [label="Step 1: requesting-code-review"];
     verify [label="Fan out sub-agents\nto verify findings (one per file)"];
     present [label="Write the write-up file\n(index, table, finding blocks)"];
     curate [label="Plannotator gate\n(fallback: sequential prompts)" shape=diamond];
@@ -94,7 +94,7 @@ digraph finalize {
 
 Identical in both modes — the plannotator gate *is* the confirmation.
 
-**REQUIRED SUB-SKILL:** `superpowers:requesting-code-review` — dispatches one reviewer sub-agent over the git range and returns a prose review (Strengths / Critical / Important / Minor / Assessment).
+**REQUIRED SUB-SKILL:** `requesting-code-review` — dispatches one reviewer sub-agent over the git range and returns a prose review (Strengths / Critical / Important / Minor / Assessment).
 
 SHAs from the merge-base, never the remote branch directly:
 
@@ -530,7 +530,6 @@ catches it — the POST succeeded, so there is no failed request to notice.
 
 ## Integration
 
-- **superpowers:executing-plans** — invoke this skill after plan execution completes
-- **superpowers:requesting-code-review** — Step 1 finder
+- **requesting-code-review** — Step 1 finder
 - **simplify** (code-simplifier) — Step 2
 - **squash** — Step 3

@@ -35,7 +35,7 @@ If the session exposes a project test-runner skill (e.g. `pytest-docker`), **inv
 - **Single open MR.** Several MRs on the branch → auto-pick `state == "opened"`; ask only at 0 or ≥2.
 - **Threads sharing an anchor or a fix are one unit** (Stage 1c cluster): verify and fix once, reply and resolve per `discussion_id`.
 - **Verification is grouped by file — one sub-agent per file, `model: sonnet`, full verdict space** (Stage 2). Stage 4 edits the repo on the session model.
-- **Verify before implementing.** Never apply a request blind — re-read the cited code first. (The `superpowers:receiving-code-review` stance: evaluate, don't perform agreement.)
+- **Verify before implementing.** Never apply a request blind — re-read the cited code first: evaluate, don't perform agreement.
 - **An `invalid` verdict carries its evidence into the write-up.** Dismiss and Push back post to a permanent thread; the user approves each at the Stage 3 gate and needs to see what was read, not a bare "verified invalid".
 - **Never use `AskUserQuestion`.** Every question — outward-batch confirmation, clarifications, fallback curation — is plain text with numbered options, then wait. Its countdown assumes a default; a review disposition and an irreversible post must not be answered by a timer.
 - **Curation happens in the plannotator gate** (Stage 3a): `plannotator annotate "$FILE" --gate --json` blocks until the user approves, annotates, or closes. `approved` applies every `**Default:**`; `dismissed` aborts; `annotated` overrides per thread.

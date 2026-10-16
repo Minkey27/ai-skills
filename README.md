@@ -12,6 +12,7 @@ A personal collection of [Claude Code](https://docs.claude.com/en/docs/claude-co
 - **pytest-docker** — run pytest inside the project's docker-compose backend container.
 - **rebase-on-epic** — restack a story branch onto its epic's latest tip, replaying only the branch's own commits even after the epic was force-pushed.
 - **rebase-on-main** — rebase the current feature branch onto `main` with guided conflict resolution.
+- **requesting-code-review** — dispatch one read-only reviewer subagent over a git range; the review step behind `finalize-branch` and `mr-review`, and usable alone (e.g. on a GitHub PR). Adapted from [superpowers](https://github.com/obra/superpowers) (MIT).
 - **squash** — reorganize messy or fixup commits into clean logical commits.
 - **worklog** — reconstruct what you worked on in a time window from Claude Code session transcripts + git history; renders a `Subject | Summary | Wallclock | Active estimate` table to help log hours. Reports only; no config required (`AI_SKILLS_TICKET_PREFIX` optionally improves ticket labeling).
 
@@ -61,6 +62,7 @@ Common values to set:
 | `pytest-docker` | Optional | `AI_SKILLS_BACKEND_SERVICE` (default `backend`); only useful if you run pytest in docker-compose |
 | `rebase-on-epic` | Optional | Same variables as `rebase-on-main`. Finds the epic from the MR target through `glab` + `jq` when you don't name it |
 | `rebase-on-main` | Optional | `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, `AI_SKILLS_MIGRATIONS_PATH`, `AI_SKILLS_ALEMBIC_CMD` (each step is skipped when its variable is empty) |
+| `requesting-code-review` | No | `git` |
 | `worklog` | Optional | `AI_SKILLS_TICKET_PREFIX` (labeling only); otherwise `git` + Python stdlib. Scans `~/.claude/projects`. |
 
 All skills run with no config — the project-specific steps just turn into no-ops.

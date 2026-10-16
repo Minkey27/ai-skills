@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # /mr-review
 
-Review the open MR on the current branch end to end: gather intent (ticket + MR description), run `superpowers:requesting-code-review`, verify every finding against the real code, let the user curate, post the approved findings as line-anchored diff notes.
+Review the open MR on the current branch end to end: gather intent (ticket + MR description), run `requesting-code-review`, verify every finding against the real code, let the user curate, post the approved findings as line-anchored diff notes.
 
 ## When to use
 
@@ -15,7 +15,7 @@ Works on any MR whose source branch is checked out — the user's own (pre-fligh
 Not for:
 - An MR whose branch is **not checked out**. Verification needs a working tree; `git show` can't grep neighbours. Tell the user to `glab mr checkout <iid>` first.
 - Ad-hoc comments — use `glab mr note` directly.
-- GitHub PRs. GitLab-only; for GitHub run `superpowers:requesting-code-review` by itself.
+- GitHub PRs. GitLab-only; for GitHub run `requesting-code-review` by itself.
 
 ## Config
 
@@ -34,7 +34,7 @@ Ticket lookup also needs a tracker MCP in the session (Step 2); without one the 
 
 ## Hard rules
 
-- **GitLab only.** Resolve the tool early (`AI_SKILLS_MR_TOOL`, else origin URL). Not `glab` → stop; for GitHub suggest `superpowers:requesting-code-review` directly.
+- **GitLab only.** Resolve the tool early (`AI_SKILLS_MR_TOOL`, else origin URL). Not `glab` → stop; for GitHub suggest `requesting-code-review` directly.
 - **Branch must match** the MR's `source_branch` (`glab mr view --output json`). Mismatch → stop; switching branches is the user's call.
 - **Never post without confirmation.** Posting is irreversible — notifications fire, threads persist. The write-up goes through the gate every time.
 - **Never use `AskUserQuestion`.** Every question — clarifications, post confirmation, fallback curation — is plain text with numbered options, then wait. The tool's countdown assumes a default on expiry; "which findings get posted to a shared MR" must not be answered by a timer.
@@ -149,7 +149,7 @@ Flag: claims the diff doesn't deliver (a ticket acceptance criterion, or a claim
 ### 5. Run the code review
 
 ```
-Skill: superpowers:requesting-code-review
+Skill: requesting-code-review
 ```
 
 Pass `BASE_SHA`/`HEAD_SHA` from Step 1. Reviewer template: `DESCRIPTION` = the intent summary; `PLAN_OR_REQUIREMENTS` = the ticket goal when confidence ≥ Medium, otherwise state that none were available.

@@ -114,9 +114,6 @@ rather than just naming it. Typical picks:
 | Situation | Skill |
 |---|---|
 | Any test run | the project's test-runner skill (e.g. `pytest-docker`) |
-| Implementation continuing from a written plan | `superpowers:executing-plans` |
-| Feature/design work not yet specced | `superpowers:brainstorming` |
-| A reproducing bug | `superpowers:systematic-debugging` |
 | Work is finished, needs review + MR | `finalize-branch` |
 | Rebasing / squashing before review | `rebase-on-main`, `squash` |
 | Review feedback waiting on an MR | `process-mr-feedback` |
