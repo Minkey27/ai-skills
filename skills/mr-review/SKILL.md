@@ -485,7 +485,7 @@ For an unattended caller: a local daemon running `claude -p --permission-mode do
   "summary": "Two or three sentences: what the MR gets right and what blocks it.",
   "findings": [{
     "severity": "critical|high|medium|low|nit",
-    "bucket": "recommended|optional|excluded",
+    "bucket": "recommended|optional|excluded|ask",
     "exclude_reason": null,
     "title": "short headline",
     "file": "path/from/repo/root.py",
@@ -501,7 +501,8 @@ For an unattended caller: a local daemon running `claude -p --permission-mode do
 
 - `spec` — always `1`.
 - `summary` — two or three sentences: what the MR gets right and what blocks it. Shown on battlestation's Overview, never posted.
-- `findings` — every `F` finding, Excluded included, in id order and without ids: battlestation numbers them `F1`, `F2`, … in that order (after the `--prior` ones with `--since`), so `review.md`'s ids match. `title` is the heading's headline; `bucket` is the 7b bucket, lowercased; `exclude_reason` is the `excluded, and why` reason, `null` unless Excluded.
+- `findings` — every `F` finding, Excluded included, in id order and without ids: battlestation numbers them `F1`, `F2`, … in that order (after the `--prior` ones with `--since`), so `review.md`'s ids match. `title` is the heading's headline; `exclude_reason` is the `excluded, and why` reason, `null` unless Excluded.
+- `bucket` — the 7b bucket, lowercased, except `ask` for a finding that isn't Excluded and whose Step 6 verdict is `issue_real: partial` or `fix_sound: risky`: those are the reviewer's call, so battlestation leaves them undecided. `review.md` keeps its 7b tag and `**My read.**`.
 - `line_start` / `line_end` — the verified lines (`corrected_lines` when Step 6 gave them). File-level → both `null`.
 - `side` — `new` when the lines are added or unchanged (numbers of the new file), `old` when they are removed (numbers of the old file). Battlestation builds the GitLab position from `file`, `side` and the lines; lines outside the diff post as a general comment.
 - `verification` — Step 6's bare `issue_real` / `fix_sound` verdicts, the metadata line's delta flag, and the reasons plus any interaction in `notes`.
