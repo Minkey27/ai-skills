@@ -1,6 +1,6 @@
 ---
 name: process-mr-feedback
-description: "Use when processing review feedback on a GitLab merge request you have checked out — working through the unresolved discussion threads a reviewer (a human, or an automated/LLM diff-note) left on the MR. Triggers on phrases like 'process the review feedback', 'address the MR comments', 'work through the review threads', 'handle the review comments'. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't currently checked out, because it needs a working tree to verify findings and apply fixes."
+description: "Use when processing review feedback on a GitLab merge request you have checked out — working through the unresolved discussion threads a reviewer (a human, or an automated/LLM diff-note) left on the MR. Triggers on phrases like 'process the review feedback', 'address the MR comments', 'work through the review threads', 'handle the review comments'. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't currently checked out, because it needs a working tree to verify findings and apply fixes. Supports `--dry-run`, and for unattended callers `--headless --mr-json <file> --threads <file> --out <dir>` (verify and propose: writes `feedback.md` + `answers.json`) and `--headless --apply <file> --mr-json <file> --out <dir>` (implement the accepted fixes as local commits: writes `fixes.json`); no `glab`, no questions, no push, no posts."
 ---
 
 # process-mr-feedback
@@ -49,6 +49,7 @@ If the session exposes a project test-runner skill (e.g. `pytest-docker`), **inv
 - **No performative agreement in replies** — no "thanks" / "good catch" / "you're absolutely right".
 - **`Content-Type` header is mandatory** on `glab api ... --input -`; without it GitLab returns HTTP 415. See [references/glab-discussions.md](references/glab-discussions.md).
 - **Honor `--dry-run`** (`--dry-run`, or "dry run" in the message): build everything, write **nothing** — no edits, commit, push, or posts. Print planned fixes and reply/resolve payloads as a receipt.
+- **Honor `--headless`**: an unattended caller that curates, pushes and posts itself. No `glab`, no questions, no gate, no push, no posts; files written, then stop. Where it conflicts with a rule above, [Headless mode](#headless-mode---headless) wins.
 
 ## Workflow
 
@@ -426,6 +427,118 @@ Everything reviewers can see goes out together behind **one** confirmation.
 **Reply tone:** state the fix or the reasoning — no "thanks" / "good catch" / "you're absolutely right".
 
 **`--dry-run`:** push nothing, POST/PUT nothing. Print the push target and every payload as a receipt, e.g. `[DRY-RUN] Would push <branch> and reply+resolve N threads on MR !<iid>`.
+
+## Headless mode (--headless)
+
+```
+/process-mr-feedback --headless --mr-json <mr.json> --threads <threads.json> --out <dir>
+/process-mr-feedback --headless --apply <apply.json> --mr-json <mr.json> --out <dir>
+```
+
+For an unattended caller: a local daemon (battlestation) running `claude -p --permission-mode dontAsk` in the MR author's worktree, on the MR's source branch at the MR head. The caller fetches the threads, curates the answers, pushes, posts the replies and resolves; this mode verifies and proposes (the first form), then implements what the caller accepted (the second). Two runs, in two sessions: nothing carries over between them but the files.
+
+**Never ask anything.** No `AskUserQuestion`, no plannotator, no plain-text question that waits for a reply. A guard that fails writes nothing and ends the turn with one line, `QUESTION: <why>`.
+
+**Guard (both forms).** `git rev-parse HEAD` == `--mr-json`'s `diff_refs.head_sha`; otherwise `QUESTION: HEAD <x> != head_sha <y>`. The MR is `--mr-json`: the raw `glab api projects/<id>/merge_requests/<iid>` object. No `glab`, no `git fetch`, no divergence check: the caller did those.
+
+### Verify and propose (`--threads`)
+
+`--threads` holds the open, resolvable threads the caller wants answered, and `me`, the MR author's username:
+
+```json
+{"me": "yimingyung", "threads": [{
+  "discussion_id": "6a9c…",
+  "path": "src/service.py", "line": 62,
+  "notes": [{"author": "ann", "body": "This rewrites user_roles on every request."},
+            {"author": "yimingyung", "body": "Only when the dropdown changes?"}]
+}]}
+```
+
+`path` and `line` are `null` for a general comment. The first note opened the thread; more notes are prior discussion (`has_prior_replies`).
+
+| Stage | Headless |
+|---|---|
+| 1 | Skip the MR detection, the tool check and the divergence check. 1b's entries come from `--threads`. 1c clusters as usual. Zero threads → write `answers.json` with `"answers": []`. |
+| 2 | Unchanged: one verifier per file, full verdict space, `evidence` for every `invalid`. |
+| 3 | Build the 3a write-up as usual, written to `<out>/feedback.md`. No `$GITDIR` file, no plannotator, no prompts: the caller curates from `answers.json`. |
+| 4–5 | Don't run. Nothing is edited, committed, pushed or posted. |
+
+**A thread `me` opened** is the author's own note to self, not a reviewer's request: `valid` (still to do) → **Fix**, already done → **Dismiss**, unclear → **Defer** with the question. Never **Push back**: the author doesn't argue with themselves.
+
+**Output** — exactly two files in `--out`, nothing written anywhere else:
+
+1. **`feedback.md`** — the 3a write-up.
+2. **`answers.json`** — written **last**, once complete: one answer per thread, in `--threads` order, every key present, `null` where one doesn't apply.
+
+```json
+{
+  "spec": 1,
+  "answers": [{
+    "discussion_id": "6a9c…",
+    "cluster": "A",
+    "verdict": "valid|invalid|needs-clarification",
+    "disposition": "fix|push_back|dismiss|defer",
+    "title": "dropdown click rewrites user_roles on every request",
+    "problem": "…",
+    "why": "…",
+    "fix": "…",
+    "evidence": null,
+    "reply": "…"
+  }]
+}
+```
+
+- `cluster` — the 1c cluster's letter when the thread shares an anchor or a fix with another, else `null`. Threads in one cluster share `fix`; each keeps its own `reply`.
+- `disposition` — Stage 2's default (the table there), lowercased with `_`.
+- `title` — the block heading's headline. `problem`, `why` and `fix` — the block's **Problem.**, **Why it bites.** and **Fix.** text, without their labels. For Push back and Defer, `fix` carries the reasoning or the question, as the block does.
+- `evidence` — what was read that shows the comment is wrong; required when `verdict` is `invalid`, else `null`.
+- `reply` — the note the caller posts on the thread, as written (reply tone applies). For **Fix**, one line saying what changed, without the commit: the caller posts `Fixed in <sha>: <reply>` once the fix is pushed. Dismiss: the reasoning. Push back: the technical reasoning. Defer: the question, or that it is tracked as a follow-up.
+
+**End the turn** with one line of counts per disposition — `MR !<iid>: 2 fix, 1 push back, 1 defer → <out>`.
+
+### Implement the accepted fixes (`--apply`)
+
+`--apply` lists the fixes the caller accepted, one per cluster (or per lone thread), with the threads each one answers. `fix` is the change to make: the proposal, or the author's own words when they turned a thread into a Fix themselves; empty → decide the change from the comments.
+
+```json
+{"fixes": [{
+  "discussion_ids": ["6a9c…", "71be…"],
+  "comments": ["This rewrites user_roles on every request.", "Same in the admin view."],
+  "fix": "Resolve the role through the repository instead of the transient form value."
+}]}
+```
+
+Run Stage 4 on these and nothing else, with these differences:
+
+- **The tree must be clean** before the first edit (`git status --porcelain --untracked-files=no` empty); otherwise `QUESTION: uncommitted changes in <path>`.
+- **One commit per fix**, in `--apply` order, message `fix: <what the comments asked for>` (plus `$AI_SKILLS_COMMIT_TRAILER`). Record the short sha per fix.
+- **The pre-commit gate** runs as in Stage 4. A command the session may not run counts as `not run`, not as a failure. On a failure: commit nothing more, leave the failed fix's edits in the tree, and say which in `not_fixed`; fixes committed before it stay.
+- **Never push**, never `git reset`, `checkout`, `restore`, `stash` or `rebase`.
+
+**Output** — one file, `<out>/fixes.json`, written last:
+
+```json
+{
+  "spec": 1,
+  "fixes": [{"discussion_ids": ["6a9c…", "71be…"], "sha": "1a2b3c4", "summary": "resolve user_roles via the repository"}],
+  "not_fixed": [{"discussion_ids": ["9d02…"], "reason": "tests failed: test_roles.py::test_admin"}],
+  "checks": {"lint": "passed|failed|not run", "format": "passed|failed|not run", "tests": "passed|failed|not run"}
+}
+```
+
+Every fix in `--apply` is in `fixes` or in `not_fixed`. `summary` is the commit's one line, for the caller's records; the reply the caller posts comes from `answers.json`.
+
+**End the turn** with `MR !<iid>: 2 fixed, 1 not fixed → <out>`.
+
+### Both forms
+
+Write the files with the Write tool, not a shell heredoc: the bodies are full of quotes and backticks. JSON-escape the markdown strings (`\n`, `\"`, `\\`), then check it parses:
+
+```bash
+python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "<out>/answers.json"
+```
+
+`dontAsk` denies anything not pre-allowed; if this is denied, re-read the file and check the escaping by eye.
 
 ## Failure modes
 
