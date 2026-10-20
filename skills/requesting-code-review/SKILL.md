@@ -1,6 +1,6 @@
 ---
 name: requesting-code-review
-description: Use when finalize-branch or mr-review asks for it, or when the user wants a one-pass review of a git commit range (e.g. a GitHub PR) — dispatches one read-only reviewer subagent and returns a prose review (Strengths / Critical / Important / Minor / Assessment).
+description: Use when finalize-branch or mr-review asks for it, or when the user wants a one-pass review of a git commit range (e.g. a GitHub PR) — dispatches one read-only reviewer subagent (plan fit and code quality, plus a correctness bug hunt) and returns a prose review (Strengths / Critical / Important / Minor / Assessment).
 ---
 
 # Requesting Code Review

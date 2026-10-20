@@ -60,6 +60,29 @@ Subagent (general-purpose):
     verdict counts for nothing. If the diff feels too large for one
     pass, review it in passes yourself and say so in your report.
 
+    ## Hunt for Bugs First
+
+    Before the checklist below, make one pass over every changed hunk for
+    correctness alone:
+
+    - Trace each changed function with the inputs it will really get:
+      empty, null, zero, one, many, duplicates, a missing key, a failed call.
+    - Follow the error paths: what is caught, what is swallowed, what is
+      left half-written.
+    - Read the callers of every changed signature, return value or default,
+      and the readers of any changed data shape, even outside the diff.
+    - Check ordering and concurrency: state read before it is written, two
+      requests at once, a retry that repeats a side effect.
+    - Read the history (`git log -L` or `git blame`) and comments of the
+      lines you change: a change that undoes an earlier fix, or breaks a
+      rule a comment states, is a bug.
+    - Read the repository's CLAUDE.md files (root and touched directories)
+      and flag changes that break a rule they state, quoting the rule.
+
+    Report bugs this range introduces or exposes, not pre-existing ones it
+    sits next to, and not ones a compiler, type checker or linter would
+    catch.
+
     ## What to Check
 
     **Plan alignment:**
@@ -72,7 +95,6 @@ Subagent (general-purpose):
     - Proper error handling?
     - Type safety where applicable?
     - DRY without premature abstraction?
-    - Edge cases handled?
 
     **Architecture:**
     - Sound design decisions?
@@ -90,7 +112,6 @@ Subagent (general-purpose):
     - Migration strategy if schema changed?
     - Backward compatibility considered?
     - Documentation complete?
-    - No obvious bugs?
 
     ## Calibration
 

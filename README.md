@@ -12,7 +12,7 @@ A personal collection of [Claude Code](https://docs.claude.com/en/docs/claude-co
 - **pytest-docker** — run pytest inside the project's docker-compose backend container.
 - **rebase-on-epic** — restack a story branch onto its epic's latest tip, replaying only the branch's own commits even after the epic was force-pushed.
 - **rebase-on-main** — rebase the current feature branch onto `main` with guided conflict resolution.
-- **requesting-code-review** — dispatch one read-only reviewer subagent over a git range; the review step behind `finalize-branch` and `mr-review`, and usable alone (e.g. on a GitHub PR). Adapted from [superpowers](https://github.com/obra/superpowers) (MIT).
+- **requesting-code-review** — dispatch one read-only reviewer subagent over a git range (plan fit and code quality, plus a correctness bug hunt); the review step behind `finalize-branch` and `mr-review`, and usable alone (e.g. on a GitHub PR). Adapted from [superpowers](https://github.com/obra/superpowers) (MIT).
 - **squash** — reorganize messy or fixup commits into clean logical commits.
 - **worklog** — reconstruct what you worked on in a time window from Claude Code session transcripts + git history; renders a `Subject | Summary | Wallclock | Active estimate` table to help log hours. Reports only; no config required (`AI_SKILLS_TICKET_PREFIX` optionally improves ticket labeling).
 
