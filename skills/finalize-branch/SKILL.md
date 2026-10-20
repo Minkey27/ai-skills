@@ -200,9 +200,9 @@ Verified false positives (`issue_real == no`) get no bucket; they live in the `d
 
 Then curate:
 
-1. Print the absolute path, severity count, overview table and `dropped, and why` line. **Then END YOUR TURN** — a message that asks nothing. A same-turn prompt means the user picks findings they never read; "before" is a turn boundary, not text order.
+1. Print the absolute path, then the whole write-up as your message text (not with `cat`: tool output is not reliably shown to the user). **Then END YOUR TURN** — a message that asks nothing. A same-turn prompt means the user picks findings they never read; "before" is a turn boundary, not text order.
 2. In a *later* turn, two sequential numbered plain-text prompts — **never `AskUserQuestion`**. Prompt 1: Recommended only, default all, reply with numbers to drop (or "go" / "none"); **wait**. Prompt 2: Optional only, opposite default — nothing is fixed unless named; skip when empty.
-3. One line per finding: `[F3 medium] services.py:120 — duplicate enum 'Afdeling'` plus a verification flag in parentheses where one applies. Detail is in the file.
+3. One line per finding: `[F3 medium] services.py:120 — duplicate enum 'Afdeling'` plus a verification flag in parentheses where one applies. Detail is in the printed write-up.
 
 ```markdown
 **Recommended — 3 findings.** Default is all of them. Reply with numbers to drop, or "go".

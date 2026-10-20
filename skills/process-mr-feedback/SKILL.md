@@ -38,8 +38,8 @@ If the session exposes a project test-runner skill (e.g. `pytest-docker`), **inv
 - **Verify before implementing.** Never apply a request blind — re-read the cited code first: evaluate, don't perform agreement.
 - **An `invalid` verdict carries its evidence into the write-up.** Dismiss and Push back post to a permanent thread; the user approves each at the Stage 3 prompts and needs to see what was read, not a bare "verified invalid".
 - **Never use `AskUserQuestion`.** Every question — outward-batch confirmation, clarifications, curation — is plain text with numbered options, then wait. Its countdown assumes a default; a review disposition and an irreversible post must not be answered by a timer.
-- **Curation is two terminal prompts after a turn break** (Stage 3b). Print path, counts and table, **end the turn**, then ask two sequential numbered prompts in a later turn: Fix candidates first, wait, then Push back / Dismiss / Defer.
-- **Write-ups go to a file, never the terminal.** Terminal gets the path, counts and overview table, never the thread blocks.
+- **Curation is two terminal prompts after a turn break** (Stage 3b). Print the whole write-up, **end the turn**, then ask two sequential numbered prompts in a later turn: Fix candidates first, wait, then Push back / Dismiss / Defer.
+- **Write-ups go to a file and to the terminal.** The user reads the whole write-up in the terminal; the file is the record.
 - **Lint/format/tests are a hard pre-commit gate.** Any failure → STOP before the outward batch.
 - **Stage by explicit path, never `git add -A`.** A dirty tree is tolerated at Stage 1; a catch-all add would push the user's unrelated work.
 - **Outward actions need one explicit confirmation.** Push + replies + resolves go as one batch after the user sees the exact reply text and resolve flags.
@@ -256,9 +256,9 @@ already obvious from the block.>
 
 **3b. Curate.**
 
-1. Print the absolute path, verdict count, overview table, and any prior-replies note. **Then END YOUR TURN** — ask nothing.
+1. Print the absolute path, then the whole write-up as your message text (not with `cat`: tool output is not reliably shown to the user). **Then END YOUR TURN** — ask nothing.
 2. In a *later* turn, two sequential numbered plain-text prompts — **never `AskUserQuestion`**. Prompt 1: **Fix** candidates only — default all, reply with numbers to drop (or 'all' / 'none'); **wait**. Prompt 2: the remaining Push back / Dismiss / Defer threads to confirm or change; skip if none.
-3. One line per thread — `#<id> · <verdict> · file:line`, plus a cluster note where one edit covers several. No fix summary; it's in the file.
+3. One line per thread — `#<id> · <verdict> · file:line`, plus a cluster note where one edit covers several. No fix summary; it's in the printed write-up.
 
 ```markdown
 **Fix candidates** — default is all four. Reply with numbers to drop, or "go".

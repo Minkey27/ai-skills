@@ -38,8 +38,8 @@ Ticket lookup also needs a tracker MCP in the session (Step 2); without one the 
 - **Branch must match** the MR's `source_branch` (`glab mr view --output json`). Mismatch → stop; switching branches is the user's call.
 - **Never post without confirmation.** Posting is irreversible — notifications fire, threads persist. The write-up goes through curation every time.
 - **Never use `AskUserQuestion`.** Every question — clarifications, post confirmation, curation — is plain text with numbered options, then wait. The tool's countdown assumes a default on expiry; "which findings get posted to a shared MR" must not be answered by a timer.
-- **Curation is two terminal prompts after a turn break** (Step 7c). Print path, counts, discrepancy report and table, **end the turn**, then ask two sequential numbered prompts in a later turn: Recommended first, wait, then Optional. Never one combined list.
-- **Write-ups go to a file, never the terminal**, whatever the count. File: meta block, counts, discrepancy report, overview table, every finding block. Terminal: path, counts, discrepancy report and overview table, never the finding blocks.
+- **Curation is two terminal prompts after a turn break** (Step 7c). Print the whole write-up, **end the turn**, then ask two sequential numbered prompts in a later turn: Recommended first, wait, then Optional. Never one combined list.
+- **Write-ups go to a file and to the terminal**, whatever the count: meta block, counts, discrepancy report, overview table, every finding block. The user reads it in the terminal; the file is the record.
 - **`Content-Type` header is mandatory** on `glab api ... --input -`; without it GitLab returns HTTP 415. Position-payload rules and a worked example: [references/glab-diff-notes.md](references/glab-diff-notes.md). Don't re-derive them.
 - **Verification sub-agents read the actual files** at the MR tip, not summaries — that is the only way to catch hallucinated or stale findings.
 - **Honor `--dry-run`** (`/mr-review --dry-run`, or "dry run" in the message): build the payloads, print them as the receipt, POST nothing.
@@ -273,7 +273,7 @@ Recommended → heading tag `[Rec]`; Optional → heading tag `[Skip]`; Excluded
 
 **7c. Curate.**
 
-1. Print the absolute path, severity count, discrepancy report, overview table, `excluded, and why` lines. **Then END YOUR TURN** — a message that asks nothing. "Before" is a turn boundary, not text order.
+1. Print the absolute path, then the whole write-up as your message text (not with `cat`: tool output is not reliably shown to the user). **Then END YOUR TURN** — a message that asks nothing. "Before" is a turn boundary, not text order.
 2. In a *later* turn, two sequential numbered plain-text prompts. Prompt 1: Recommended only, default all, reply with numbers to drop; **wait**. Prompt 2: Optional only, default none unless named; skip when empty.
 3. One line per finding: `[F3 medium] auth/repositories.py:128 — every dropdown click rewrites user_roles` plus a verification flag in parentheses where one applies. A `D` finding: `[D1 low] MR description — description says stacked branches are handled`.
 
