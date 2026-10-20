@@ -36,11 +36,10 @@ If the session exposes a project test-runner skill (e.g. `pytest-docker`), **inv
 - **Threads sharing an anchor or a fix are one unit** (Stage 1c cluster): verify and fix once, reply and resolve per `discussion_id`.
 - **Verification is grouped by file — one sub-agent per file, `model: sonnet`, full verdict space** (Stage 2). Stage 4 edits the repo on the session model.
 - **Verify before implementing.** Never apply a request blind — re-read the cited code first: evaluate, don't perform agreement.
-- **An `invalid` verdict carries its evidence into the write-up.** Dismiss and Push back post to a permanent thread; the user approves each at the Stage 3 gate and needs to see what was read, not a bare "verified invalid".
-- **Never use `AskUserQuestion`.** Every question — outward-batch confirmation, clarifications, fallback curation — is plain text with numbered options, then wait. Its countdown assumes a default; a review disposition and an irreversible post must not be answered by a timer.
-- **Curation happens in the plannotator gate** (Stage 3a): `plannotator annotate "$FILE" --gate --json` blocks until the user approves, annotates, or closes. `approved` applies every `**Default:**`; `dismissed` aborts; `annotated` overrides per thread.
-- **Terminal prompts are the fallback.** Only when `command -v plannotator` fails or the gate returns no payload: print path + counts + table, **end the turn**, then two sequential numbered prompts in a later turn — Fix candidates first, wait, then Push back / Dismiss / Defer.
-- **Write-ups go to a file, never the terminal.** Terminal gets the path and counts only.
+- **An `invalid` verdict carries its evidence into the write-up.** Dismiss and Push back post to a permanent thread; the user approves each at the Stage 3 prompts and needs to see what was read, not a bare "verified invalid".
+- **Never use `AskUserQuestion`.** Every question — outward-batch confirmation, clarifications, curation — is plain text with numbered options, then wait. Its countdown assumes a default; a review disposition and an irreversible post must not be answered by a timer.
+- **Curation is two terminal prompts after a turn break** (Stage 3b). Print path, counts and table, **end the turn**, then ask two sequential numbered prompts in a later turn: Fix candidates first, wait, then Push back / Dismiss / Defer.
+- **Write-ups go to a file, never the terminal.** Terminal gets the path, counts and overview table, never the thread blocks.
 - **Lint/format/tests are a hard pre-commit gate.** Any failure → STOP before the outward batch.
 - **Stage by explicit path, never `git add -A`.** A dirty tree is tolerated at Stage 1; a catch-all add would push the user's unrelated work.
 - **Outward actions need one explicit confirmation.** Push + replies + resolves go as one batch after the user sees the exact reply text and resolve flags.
@@ -191,9 +190,7 @@ One table keyed by `discussion_id`; a cluster's verdict applies to every thread 
 
 ### 3. Present the findings, then curate dispositions
 
-The write-up goes to a file; the file opens in plannotator with an Approve button; the call blocks until the user approves, annotates, or closes. Each thread block carries its proposed disposition as a `**Default:**` line, so approving is a deliberate act on a document the user has opened.
-
-Without plannotator, plain-text numbered prompts with a **hard turn boundary**: present, end the turn, ask in a *later* turn. "Before" is a turn boundary, not text order. **`AskUserQuestion` is forbidden on both paths.**
+The write-up goes to a file, then curation runs as plain-text numbered prompts with a **hard turn boundary**: present, end the turn, ask in a *later* turn. "Before" is a turn boundary, not text order. **`AskUserQuestion` is forbidden.**
 
 **3a. Analysis turn.**
 
@@ -215,7 +212,7 @@ The file stands alone. In order:
    | [5](#5fix---hard-coded-gray-in-macro-duplicate-of-4) | hard-coded gray in macro, duplicate of #4 | macros.html:14 | valid ↳ #4 | Fix | same edit as #4 |
    ```
 
-   A thread riding another's cluster verdict carries `↳ #<n>` after its verdict. Anchors assume GitHub-style slugs (lowercase, brackets dropped, the ` - ` separator collapsing to three hyphens, spaces → hyphens); if plannotator slugifies differently the links just don't jump.
+   A thread riding another's cluster verdict carries `↳ #<n>` after its verdict. Anchors assume GitHub-style slugs (lowercase, brackets dropped, the ` - ` separator collapsing to three hyphens, spaces → hyphens); if your Markdown viewer slugifies differently the links just don't jump.
 
 4. **Cluster sections and thread blocks**:
 
@@ -239,61 +236,25 @@ For Push back / Defer this carries the technical reasoning or the question inste
 **My read.** <One sentence: fix it / push back / defer, and why — only when the call isn't
 already obvious from the block.>
 
-**Default:** fix — annotate this block with `push back`, `dismiss` or `defer` to change it.
-
 ---
 ```
 
 **Rules:**
 
-- **Heading: `### #<n>[<Disposition>] - <headline>`.** ID, proposed disposition, headline — nothing else. The tag is the display form (`[Fix]`, `[Push back]`, `[Dismiss]`, `[Defer]`), so the proposal is readable from the outline without opening the block. Outline entry, table link target, annotation anchor.
+- **Heading: `### #<n>[<Disposition>] - <headline>`.** ID, proposed disposition, headline — nothing else. The tag is the display form (`[Fix]`, `[Push back]`, `[Dismiss]`, `[Defer]`), so the proposal is readable from the outline without opening the block. Outline entry and table link target.
 - **One metadata line under the heading**, `·`-separated: verdict, anchor as a code span, author, verification delta flag. The disposition does not repeat here — the heading tag carries it. No line → `(no anchor)`, matching the table.
 - **Delta flag: 2–4 words** as `verification **<flag>**` — label plain, flag bold. Typical: verified as claimed, anchor drifted to :<line>, inverted the diagnosis, reviewer misread the call, could not verify; coin one when none fits.
 - **`**Problem.**` — mechanism only, ~6 lines**; **`**Why it bites.**` required and separate.** Run-on bold lead-ins, never colon-labelled one-liners, no `**Verification:**` badge line — verification is woven into the prose; the flag only indexes it. `inverted the diagnosis` carries both claim and correction, so ~8 lines; never meet the cap by dropping the correction. No runtime consequence → `**Why it bites.**` names who is misled and when.
-- **`**Default:**` is the last line** before the separator: the proposed disposition and the words that override it. The gate reads it. One disposition, three forms — don't swap them:
-  - **annotation input** — lowercase text the user types: `fix`, `push back`, `dismiss`, `defer`. Match case-insensitively.
+- **One disposition, three forms.** Don't swap them:
+  - **reply input** — lowercase text the user types in Prompt 2: `fix`, `push back`, `dismiss`, `defer`. Match case-insensitively.
   - **display** — heading tag and table, Title Case with a space: `Fix`, `Push back`, `Dismiss`, `Defer`.
   - **frozen-map key** — single token: `Fix`, `PushBack`, `Dismiss`, `Defer`.
 
   Only `Push back` vs `PushBack` differs beyond case.
-- **Cluster headings** when threads share a mechanism: `## Cluster A — <the mechanism>` plus one line on how they interact. Every thread keeps its own block, metadata line, `**Default:**` and `---`.
+- **Cluster headings** when threads share a mechanism: `## Cluster A — <the mechanism>` plus one line on how they interact. Every thread keeps its own block, metadata line and `---`.
 - **Flag prior replies** in the block as well as the meta block.
 
-**Terminal gets** the absolute path on its own line and the verdict count. Nothing else.
-
-**Hand it over.** A separate `bash` block doesn't inherit `$GITDIR`/`$SLUG`, so inline the substitutions:
-
-```bash
-command -v plannotator >/dev/null &&
-plannotator annotate "$(git rev-parse --absolute-git-dir)/mr-feedback-$(git rev-parse --abbrev-ref HEAD | tr '/' '-').md" --gate --json
-```
-
-`--gate` adds Approve; `--json` emits the decision on stdout. **Run it with `run_in_background: true`**; the harness notifies you when it exits. The user may take hours, and a foreground call dies at the Bash tool's 10-minute cap.
-
-**Approve discards annotations.** Approve emits a bare `approved` and drops any annotations made first. A user who has marked up a block must submit via the annotation flow. Say this when handing over.
-
-**3b. Read the gate's decision.**
-
-| Decision | Meaning | What you do |
-|---|---|---|
-| `approved` | Approve clicked | Every `**Default:**` stands — that is the disposition map. |
-| `dismissed` | Window closed without approving | **Abort.** No edits, commit, push, replies, or resolves. Say so. |
-| `annotated` | Annotations returned | Each overrides the `**Default:**` of the block it anchors to; the rest keep theirs. |
-| anything else | Unrecognised / unparseable | **Abort** as `dismissed`. Print what came back. Never freeze defaults on an unreadable answer. |
-
-`annotated` mapping:
-
-- Annotations anchor per block (paragraph, heading, list item); the `### #<n>[<Disposition>]` heading is the intended target. Map by the `#<n>` token in anchor text or body — the tag is not part of the ID, and an annotation may contradict it.
-- Vocabulary: `fix`, `push back`, `dismiss`, `defer` — case-insensitive; the map records `Fix | PushBack | Dismiss | Defer`. Any may override any other in either direction.
-- Text outside the vocabulary (a question, "the anchor is wrong") applies **nothing**. Answer it, re-open the write-up.
-- Can't map to exactly one thread → **ask**. Never guess, never fall back to the default.
-- Cluster members riding another's verdict (`↳ #<n>`) follow the annotation on their cluster lead unless they carry their own.
-
-**Print an applied receipt** naming every thread and its final disposition before Stage 4 does anything.
-
-**Silence is never consent.** Only an affirmative payload freezes a disposition map: `approved`, or `annotated`. `dismissed` (`{"decision": "dismissed"}`, or exit 0 with empty output) and any unrecognised payload abort. **No answer at all** — binary missing, browser never opened, non-zero exit with empty stdout, process died before emitting JSON — is the only case that routes to the fallback. *Abort when an answer came back and wasn't approval; fall back only when no answer could be obtained.*
-
-**3b-fallback. No plannotator.** Guard with `command -v plannotator`. Take this path on absence or **no payload**; a non-zero exit that still carried a payload goes through the table above.
+**3b. Curate.**
 
 1. Print the absolute path, verdict count, overview table, and any prior-replies note. **Then END YOUR TURN** — ask nothing.
 2. In a *later* turn, two sequential numbered plain-text prompts — **never `AskUserQuestion`**. Prompt 1: **Fix** candidates only — default all, reply with numbers to drop (or 'all' / 'none'); **wait**. Prompt 2: the remaining Push back / Dismiss / Defer threads to confirm or change; skip if none.
@@ -309,6 +270,8 @@ plannotator annotate "$(git rev-parse --absolute-git-dir)/mr-feedback-$(git rev-
 ```
 
 Numbered text has no 4-option ceiling — one prompt per bucket. Never mix Fix and non-Fix; finish Prompt 1 before Prompt 2. No reply → stop.
+
+**Print an applied receipt** naming every thread and its final disposition before Stage 4 does anything.
 
 **Output of this stage:** a frozen disposition map
 
@@ -437,7 +400,7 @@ Everything reviewers can see goes out together behind **one** confirmation.
 
 For an unattended caller: a local daemon (battlestation) running `claude -p --permission-mode dontAsk` in the MR author's worktree, on the MR's source branch at the MR head. The caller fetches the threads, curates the answers, pushes, posts the replies and resolves; this mode verifies and proposes (the first form), then implements what the caller accepted (the second). Two runs, in two sessions: nothing carries over between them but the files.
 
-**Never ask anything.** No `AskUserQuestion`, no plannotator, no plain-text question that waits for a reply. A guard that fails writes nothing and ends the turn with one line, `QUESTION: <why>`.
+**Never ask anything.** No `AskUserQuestion`, no plain-text question that waits for a reply. A guard that fails writes nothing and ends the turn with one line, `QUESTION: <why>`.
 
 **Guard (both forms).** `git rev-parse HEAD` == `--mr-json`'s `diff_refs.head_sha`; otherwise `QUESTION: HEAD <x> != head_sha <y>`. The MR is `--mr-json`: the raw `glab api projects/<id>/merge_requests/<iid>` object. No `glab`, no `git fetch`, no divergence check: the caller did those.
 
@@ -460,7 +423,7 @@ For an unattended caller: a local daemon (battlestation) running `claude -p --pe
 |---|---|
 | 1 | Skip the MR detection, the tool check and the divergence check. 1b's entries come from `--threads`. 1c clusters as usual. Zero threads → write `answers.json` with `"answers": []`. |
 | 2 | Unchanged: one verifier per file, full verdict space, `evidence` for every `invalid`. |
-| 3 | Build the 3a write-up as usual, written to `<out>/feedback.md`. No `$GITDIR` file, no plannotator, no prompts: the caller curates from `answers.json`. |
+| 3 | Build the 3a write-up as usual, written to `<out>/feedback.md`. No `$GITDIR` file, no prompts: the caller curates from `answers.json`. |
 | 4–5 | Don't run. Nothing is edited, committed, pushed or posted. |
 
 **A thread `me` opened** is the author's own note to self, not a reviewer's request: `valid` (still to do) → **Fix**, already done → **Dismiss**, unclear → **Defer** with the question. Never **Push back**: the author doesn't argue with themselves.
@@ -557,7 +520,7 @@ python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "<out>/answers.json"
 - **Lint / format / tests fail** — STOP before the outward batch.
 - **Thread has prior replies** — flag "has prior discussion"; let the user decide whether to add to it.
 - **Push fails at the gate** — abort the batch so no reply cites an invisible SHA.
-- **No answer from the gate, a fallback prompt, or the batch confirmation** — stop, leave state as is; the run resumes when the user answers. `dismissed` and an unrecognised payload count as "no answer" here; a gate with no payload at all routes to the fallback prompts instead.
+- **No answer to a curation prompt or the batch confirmation** — stop, leave state as is; the run resumes when the user answers.
 - **Dirty tree at start** — surface it before editing; the user decides.
 
 ## Why this shape
@@ -568,7 +531,7 @@ python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "<out>/answers.json"
 
 **Flat `sonnet`, full verdict space; the gate is the guard.** A wrong dismissal would auto-resolve a real finding, but no `invalid` reaches GitLab without the user approving it at the Stage 3 gate, where silence is never consent. The required `evidence` field is what lets the person approving a Dismiss judge it.
 
-**The gate is the read guarantee.** When analysis and question share a turn, the user curates findings they never read. A stopped turn proves only that the assistant stopped talking; a blocking `plannotator annotate --gate` can't return until they've been in the document, and each disposition sits in its own block instead of a list three screens away. On the fallback path the turn break carries the whole guarantee.
+**The turn break is the read guarantee.** When analysis and question share a turn, the user curates findings they never read. Ending the turn on the write-up puts the reading before the question.
 
 **Text, never `AskUserQuestion`.** Its countdown assumes a default on expiry, and the decisions here are "close a reviewer's finding" and "post on a shared MR". Its labels also truncate; numbered text has no 4-option ceiling, so a 12-thread Fix list is one prompt.
 

@@ -71,7 +71,7 @@ digraph finalize {
     review [label="Step 1: requesting-code-review"];
     verify [label="Fan out sub-agents\nto verify findings (one per file)"];
     present [label="Write the write-up file\n(index, table, finding blocks)"];
-    curate [label="Plannotator gate\n(fallback: sequential prompts)" shape=diamond];
+    curate [label="Curation prompts\n(two turns, sequential)" shape=diamond];
     fix [label="Fix selected findings\n+ commit"];
     gate1 [label="User confirms\n(skipped in yolo)" shape=diamond];
     simplify [label="Step 2: Simplify\n(auto-applies in yolo)"];
@@ -92,7 +92,7 @@ digraph finalize {
 
 ### Step 1: Code Review (with verification + curation)
 
-Identical in both modes — the plannotator gate *is* the confirmation.
+Identical in both modes: the curation prompts *are* the confirmation.
 
 **REQUIRED SUB-SKILL:** `requesting-code-review` — dispatches one reviewer sub-agent over the git range and returns a prose review (Strengths / Critical / Important / Minor / Assessment).
 
@@ -164,7 +164,7 @@ Aggregate into a table keyed by finding id.
 
 **1c. Write the findings up, then hand them over.** The user must be able to read what each finding *is*, the *suggested fix*, and what verification concluded before deciding anything.
 
-**Classify first** (bucket table in 1d) — the bucket sets each block's `**Default:**`.
+**Classify first** (bucket table in 1d): the bucket sets each block's heading tag.
 
 **Location.** Always a file. `GITDIR="$(git rev-parse --absolute-git-dir)"`, `SLUG="$(git rev-parse --abbrev-ref HEAD | tr '/' '-')"`, write to `$GITDIR/review-$SLUG.md` — never committed, invisible to `git status`, isolated per worktree, no `.gitignore` edit.
 
@@ -181,57 +181,24 @@ The file stands alone. In order:
    | [F2](#f2skip---stale-cache-key) | stale cache key | low | (file-level) | ✓ yes | ⚠ risky | Optional |
    ```
 
-   Anchors assume GitHub-style slugs (lowercase, brackets dropped, the ` - ` separator collapsing to three hyphens, spaces → hyphens). If plannotator slugifies differently the links just don't jump — navigation only.
+   Anchors assume GitHub-style slugs (lowercase, brackets dropped, the ` - ` separator collapsing to three hyphens, spaces → hyphens). If your Markdown viewer slugifies differently the links just don't jump; they are navigation only.
 
 4. **Cluster sections and finding blocks** — see [Finding write-up format](#finding-write-up-format).
 
-**Terminal gets** the absolute path on its own line and the severity count. Nothing else — no excerpts, no table, no "highlights".
+**1d. Buckets and curation.** Exactly one bucket per shown finding, decided before the document is written:
 
-**Hand it over.** A separate `bash` block doesn't inherit `$GITDIR`/`$SLUG`, so inline the substitutions:
-
-```bash
-command -v plannotator >/dev/null &&
-plannotator annotate "$(git rev-parse --absolute-git-dir)/review-$(git rev-parse --abbrev-ref HEAD | tr '/' '-').md" --gate --json
-```
-
-`--gate` adds Approve; `--json` emits the decision on stdout. The call blocks until the user approves, annotates, or closes — it cannot return before they have been in the document. **Run it with `run_in_background: true`**; the harness notifies you when it exits. The user may take hours, and a foreground call dies at the Bash tool's 10-minute cap.
-
-**Approve discards annotations.** Approve emits a bare `approved` and drops any annotations made first. A user who has marked up a block must submit via the annotation flow. Say this when handing over.
-
-**1d. Buckets and the gate's decision.** Exactly one bucket per shown finding, decided before the document is written:
-
-| Bucket | Rule | Heading tag · default |
+| Bucket | Rule | Heading tag |
 |---|---|---|
-| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND (severity ∈ {`critical`, `high`, `medium`} OR `**My read.**` is take at `low`/`nit`) | `[Rec]` · `take` |
-| **Optional** | shown but not recommended: `low`/`nit` with a `skip` read, or `fix_sound == risky` (real but the fix has caveats) | `[Skip]` · `skip` |
+| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND (severity ∈ {`critical`, `high`, `medium`} OR `**My read.**` is take at `low`/`nit`) | `[Rec]` |
+| **Optional** | shown but not recommended: `low`/`nit` with a `skip` read, or `fix_sound == risky` (real but the fix has caveats) | `[Skip]` |
 
 > **Precedence:** `medium`+ with `fix_sound == risky` → **Optional**. A caveated fix is not auto-recommended; the user opts in deliberately.
 
 > **`partial` counts as real.** It usually means the bug is real but the reviewer's trigger diagnosis was wrong. Fix the corrected version from the verification report, not the original claim.
 
-Verified false positives (`issue_real == no`) get no `**Default:**` line — they live in the `dropped, and why` line only.
+Verified false positives (`issue_real == no`) get no bucket; they live in the `dropped, and why` line only.
 
-Then act on `--json`:
-
-| Decision | Meaning | What you do |
-|---|---|---|
-| `approved` | Approve clicked | Every `**Default:**` stands. Apply. |
-| `dismissed` | Window closed without approving | **Abort.** Nothing fixed, committed, or pushed. Say so. |
-| `annotated` | Annotations returned | Each overrides the `**Default:**` of the block it anchors to; the rest keep theirs. |
-| anything else | Unrecognised / unparseable | **Abort** as `dismissed`. Print what came back. Never apply defaults on an unreadable answer. |
-
-`annotated` mapping:
-
-- Annotations anchor per block (paragraph, heading, list item); the `### F<n>[Rec|Skip]` heading is the intended target. Map by the `F<n>` token in anchor text or body — the tag is not part of the ID, and an annotation may contradict it.
-- Vocabulary: `take`, `skip`, `fold into F<n>` — case-insensitive. `fold into F<n>` = covered by F*n*; don't apply separately, record as folded.
-- Text outside the vocabulary (a question, "wrong line range") applies **nothing**. Answer it, re-open the write-up.
-- Can't map to exactly one finding → **ask**. Never guess, never fall back to the default.
-
-**Print an applied/skipped/folded receipt** naming every finding before doing any work — the user's only view of what the gate concluded.
-
-**Silence is never consent.** Only an affirmative payload applies defaults: `approved`, or `annotated`. `dismissed` (`{"decision": "dismissed"}`, or exit 0 with empty output) and any unrecognised payload abort. **No answer at all** — binary missing, browser never opened, non-zero exit with empty stdout, process died before emitting JSON — is the only case that routes to the fallback. *Abort when an answer came back and wasn't approval; fall back only when no answer could be obtained.*
-
-**1d-fallback. No plannotator.** Guard with `command -v plannotator`. Take this path on absence or **no payload**; a non-zero exit that still carried a payload goes through the table above.
+Then curate:
 
 1. Print the absolute path, severity count, overview table and `dropped, and why` line. **Then END YOUR TURN** — a message that asks nothing. A same-turn prompt means the user picks findings they never read; "before" is a turn boundary, not text order.
 2. In a *later* turn, two sequential numbered plain-text prompts — **never `AskUserQuestion`**. Prompt 1: Recommended only, default all, reply with numbers to drop (or "go" / "none"); **wait**. Prompt 2: Optional only, opposite default — nothing is fixed unless named; skip when empty.
@@ -246,6 +213,8 @@ Then act on `--json`:
 ```
 
 Numbered text has no 4-option ceiling — one prompt per bucket, never fragmented. Order by severity. Never mix buckets. No reply → stop; don't apply the default.
+
+**Print an applied/skipped receipt** naming every finding before doing any work.
 
 **1e. Fix the selected findings, commit.** Skip unselected ones. The message names what was fixed (`fix: close idor on document download, dedupe afdeling enum`) — never session-local ids (`F1`, `F3`).
 
@@ -472,7 +441,7 @@ Return the MR/PR URL.
 
 Each rule in the body carries its reason there. These are the ones it does not state:
 
-- Ask every gate and fallback question in plain text with numbered options, never `AskUserQuestion`: its countdown assumes a default, and "which findings do I fix" and "may I force-push" must not be answerable by a timer.
+- Ask every gate and curation question in plain text with numbered options, never `AskUserQuestion`: its countdown assumes a default, and "which findings do I fix" and "may I force-push" must not be answerable by a timer.
 - Mark the MR draft with `--draft`, never with a `Draft:` or `WIP:` title prefix. Pass `--draft` and `--assignee @me` on every invocation; add `--reviewer` only when `$AI_SKILLS_REVIEWERS` is non-empty.
 - Leave no literal `<TICKET>` placeholder in the description.
 - Leave out a test-plan or QA-steps section; the reviewer reads the diff and CI.
@@ -504,14 +473,12 @@ catches it — the POST succeeded, so there is no failed request to notice.
 
 **My read.** Take it — small, and it's a regression this branch introduced.
 
-**Default:** take — annotate this block with `skip` to drop it, or `fold into F<n>`.
-
 ---
 ```
 
 **Rules:**
 
-- **Heading: `### F<n>[Rec|Skip] - <headline>`.** ID, recommendation tag, headline — nothing else. The tag is the bucket from 1d: `[Rec]` for Recommended, `[Skip]` for Optional, so the call is readable from the outline without opening the block. The heading is also the table's link target and the annotation anchor; a 120-character headline fails all three jobs.
+- **Heading: `### F<n>[Rec|Skip] - <headline>`.** ID, recommendation tag, headline — nothing else. The tag is the bucket from 1d: `[Rec]` for Recommended, `[Skip]` for Optional, so the call is readable from the outline without opening the block. The heading is also the table's link target; a 120-character headline fails both jobs.
 - **One metadata line under the heading**, `·`-separated, in order: severity, anchor(s) as code spans, verification delta flag.
   - Bucket does not repeat here — the heading tag carries it.
   - Anchors are code spans (`` `services.py:120` ``); chain with `→` when the fix spans two places. No line → `(file-level)` or the path it concerns, matching the table's Anchor column.
@@ -522,10 +489,9 @@ catches it — the POST succeeded, so there is no failed request to notice.
 - **`**Fix.**` is actionable** — bullet per edit when more than one; real code line, real helper, real fixture. Say when it's a pure test addition.
 - **No `**Verification:**` badge line.** Corrections are woven into the prose in your own voice ("Important correction to the original recommendation: …", "Verification downgraded this to partial: …"). The delta flag indexes that prose; it carries no reasoning. Full verdicts live in the table.
 - **`**My read.**` — one sentence**: take / skip / fold into F*n*, only when not obvious from the block. A second sentence only when it changes *handling* — outside the diff's hunks, or wider than this branch.
-- **`**Default:**` is the last line** before the separator: the disposition that applies on silence and the words that override it. Recommended → `take`; Optional → `skip`. The gate reads this.
-- **Heading tag, `**My read.**` and `**Default:**` agree** — `[Rec]` ⇔ take ⇔ Recommended, `[Skip]` ⇔ skip ⇔ Optional. A `take` read at `low`/`nit` is the Recommended criterion for that severity (1d), so bucket it Recommended and tag it `[Rec]`. A `take` read on a `risky` fix is the read being wrong — precedence keeps the bucket Optional, so the read becomes `skip` with the caveat named. When the three disagree at write time, one of them is wrong; fix it before the next block.
+- **Heading tag and `**My read.**` agree** — `[Rec]` ⇔ take ⇔ Recommended, `[Skip]` ⇔ skip ⇔ Optional. A `take` read at `low`/`nit` is the Recommended criterion for that severity (1d), so bucket it Recommended and tag it `[Rec]`. A `take` read on a `risky` fix is the read being wrong — precedence keeps the bucket Optional, so the read becomes `skip` with the caveat named. When they disagree at write time, one of them is wrong; fix it before the next block.
 - **`---` between every finding**, including within a cluster.
-- **Cluster when findings share a mechanism**: `## Cluster A — <the mechanism>` plus one line on how they interact ("F1's write-back closes F6"). Every finding inside keeps its full block, metadata line, `**Default:**` and `---`.
+- **Cluster when findings share a mechanism**: `## Cluster A — <the mechanism>` plus one line on how they interact ("F1's write-back closes F6"). Every finding inside keeps its full block, metadata line and `---`.
 - **Overview table first** — after the counts and dropped line, before the clusters; it covers every finding.
 
 ## Integration

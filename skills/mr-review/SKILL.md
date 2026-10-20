@@ -36,11 +36,10 @@ Ticket lookup also needs a tracker MCP in the session (Step 2); without one the 
 
 - **GitLab only.** Resolve the tool early (`AI_SKILLS_MR_TOOL`, else origin URL). Not `glab` → stop; for GitHub suggest `requesting-code-review` directly.
 - **Branch must match** the MR's `source_branch` (`glab mr view --output json`). Mismatch → stop; switching branches is the user's call.
-- **Never post without confirmation.** Posting is irreversible — notifications fire, threads persist. The write-up goes through the gate every time.
-- **Never use `AskUserQuestion`.** Every question — clarifications, post confirmation, fallback curation — is plain text with numbered options, then wait. The tool's countdown assumes a default on expiry; "which findings get posted to a shared MR" must not be answered by a timer.
-- **Curation happens in the plannotator gate** (Step 7a): `plannotator annotate "$FILE" --gate --json` blocks until the user approves, annotates, or closes. `approved` applies every block's `**Default:**`; `dismissed` aborts; `annotated` overrides per finding. The block *is* the read gate.
-- **Terminal prompts are the fallback.** Only when `command -v plannotator` fails or the gate returns no payload: print path + counts + discrepancy report + table, **end the turn**, then two sequential numbered prompts in a later turn — Recommended first, wait, then Optional. Never one combined list.
-- **Write-ups go to a file, never the terminal**, whatever the count. File: meta block, counts, discrepancy report, overview table, every finding block. Terminal: path and counts only.
+- **Never post without confirmation.** Posting is irreversible — notifications fire, threads persist. The write-up goes through curation every time.
+- **Never use `AskUserQuestion`.** Every question — clarifications, post confirmation, curation — is plain text with numbered options, then wait. The tool's countdown assumes a default on expiry; "which findings get posted to a shared MR" must not be answered by a timer.
+- **Curation is two terminal prompts after a turn break** (Step 7c). Print path, counts, discrepancy report and table, **end the turn**, then ask two sequential numbered prompts in a later turn: Recommended first, wait, then Optional. Never one combined list.
+- **Write-ups go to a file, never the terminal**, whatever the count. File: meta block, counts, discrepancy report, overview table, every finding block. Terminal: path, counts, discrepancy report and overview table, never the finding blocks.
 - **`Content-Type` header is mandatory** on `glab api ... --input -`; without it GitLab returns HTTP 415. Position-payload rules and a worked example: [references/glab-diff-notes.md](references/glab-diff-notes.md). Don't re-derive them.
 - **Verification sub-agents read the actual files** at the MR tip, not summaries — that is the only way to catch hallucinated or stale findings.
 - **Honor `--dry-run`** (`/mr-review --dry-run`, or "dry run" in the message): build the payloads, print them as the receipt, POST nothing.
@@ -225,13 +224,13 @@ Report what the code shows; don't restate the finding.
 
 Aggregate into one table keyed by finding id.
 
-### 7. Present findings, then the curation gate
+### 7. Present findings, then curate
 
 **`--headless`:** classify (7b) and build the 7a write-up as usual, but write it to `<out>/review.md`; no `$GITDIR` file, no hand-over, no 7c. See [Headless mode](#headless-mode---headless).
 
 **7a. Presentation.**
 
-**Classify first** (7b) — the bucket sets each block's `**Default:**` and the table's Bucket column.
+**Classify first** (7b): the bucket sets each block's heading tag and the table's Bucket column.
 
 **Location.** Always a file. `GITDIR="$(git rev-parse --absolute-git-dir)"`, `SLUG="$(git rev-parse --abbrev-ref HEAD | tr '/' '-')"`, write to `$GITDIR/mr-review-$SLUG.md` — never committed, invisible to `git status`, isolated per worktree, no `.gitignore` edit.
 
@@ -250,62 +249,29 @@ The file stands alone. In order:
    | [F3](#f3skip---stale-docstring) | stale docstring | low | (file-level) | ✓ yes | ✓ yes | Optional |
    ```
 
-   Anchors assume GitHub-style slugs (lowercase, brackets dropped, the ` - ` separator collapsing to three hyphens, spaces → hyphens). If plannotator slugifies differently the links just don't jump — navigation only.
+   Anchors assume GitHub-style slugs (lowercase, brackets dropped, the ` - ` separator collapsing to three hyphens, spaces → hyphens). If your Markdown viewer slugifies differently the links just don't jump; they are navigation only.
 
 5. **Cluster sections and finding blocks** — see [Finding write-up format](#finding-write-up-format).
 
-**Terminal gets** the absolute path on its own line and the severity count. Nothing else; the report and table print to the terminal only on the fallback path.
-
-**Hand it over.** A separate `bash` block doesn't inherit `$GITDIR`/`$SLUG`, so inline the substitutions:
-
-```bash
-command -v plannotator >/dev/null &&
-plannotator annotate "$(git rev-parse --absolute-git-dir)/mr-review-$(git rev-parse --abbrev-ref HEAD | tr '/' '-').md" --gate --json
-```
-
-`--gate` adds Approve; `--json` emits the decision on stdout. **Run it with `run_in_background: true`**; the harness notifies you when it exits. The user may take hours, and a foreground call dies at the Bash tool's 10-minute cap.
-
-**Approve discards annotations.** Approve emits a bare `approved` and drops any annotations made first. A user who has marked up a block must submit via the annotation flow. Say this when handing over.
-
 **7b. Buckets** — exactly one per finding:
 
-| Bucket | Rule | Heading tag · default it sets (fallback prompt) |
+| Bucket | Rule | Heading tag (prompt) |
 |---|---|---|
-| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND (severity ∈ {`critical`, `high`, `medium`} OR `**My read.**` is take at `low`/`nit` — e.g. the corrected diagnosis is materially useful) | `[Rec]` · `take` (fallback Prompt 1, "Confirm to post") |
-| **Optional** | every shown finding not Recommended — `low`/`nit` with a `skip` read, `fix_sound == risky`, or `fix_sound == no` on a real finding | `[Skip]` · `skip` (fallback Prompt 2, "Optional additions") |
+| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND (severity ∈ {`critical`, `high`, `medium`} OR `**My read.**` is take at `low`/`nit` — e.g. the corrected diagnosis is materially useful) | `[Rec]` (Prompt 1, "Confirm to post") |
+| **Optional** | every shown finding not Recommended — `low`/`nit` with a `skip` read, `fix_sound == risky`, or `fix_sound == no` on a real finding | `[Skip]` (Prompt 2, "Optional additions") |
 | **Excluded** | `issue_real == no` (verified false positive), OR the sub-agent recommends declining | Not selectable. Listed in the `excluded, and why` lines. |
 
 > **Precedence:** `medium`+ with `fix_sound == risky` → **Optional**. A real issue with a caveated fix is not posted on the skill's recommendation; the user opts in with the caveat visible in `Fix sound?`.
 
 > **`partial` stays Recommended.** It usually means the bug is real but the reviewer's trigger diagnosis was wrong; the corrected diagnosis is what gets posted. Down-rating it would waste the verification.
 
-> **A `D` finding an `F` finding already covers → Optional,** whatever its severity, with the read `Skip: F<n> covers this`. The user can still take it or fold it.
+> **A `D` finding an `F` finding already covers → Optional,** whatever its severity, with the read `Skip: F<n> covers this`. The user can still take it.
 
 > **An unticked test plan or a missing manual check → Optional,** with the read `Skip: the author's own check; nothing for the reviewer to act on`. An open box such as "manual click-through" is the author's to tick; the user can still take it.
 
-Recommended → heading tag `[Rec]` and `**Default:** take`; Optional → heading tag `[Skip]` and `**Default:** skip`; Excluded → no block, so no tag and no `**Default:**` line, not part of the decision surface.
+Recommended → heading tag `[Rec]`; Optional → heading tag `[Skip]`; Excluded → no block and no tag, not part of the decision surface.
 
-**7c. Read the gate's decision.**
-
-| Decision | Meaning | What you do |
-|---|---|---|
-| `approved` | Approve clicked | Every `**Default:**` stands. Post the `take` findings. |
-| `dismissed` | Window closed without approving | **Abort.** Post nothing. Say so. |
-| `annotated` | Annotations returned | Each overrides the `**Default:**` of the block it anchors to; the rest keep theirs. |
-| anything else | Unrecognised / unparseable | **Abort** as `dismissed`. Print what came back. Never post defaults on an unreadable answer. |
-
-`annotated` mapping:
-
-- Annotations anchor per block (paragraph, heading, list item); the `### <id>[Rec|Skip]` heading is the intended target. Map each annotation to the finding whose heading it sits under: find its anchor text in the write-up file and take the nearest `### <id>` above it. Ids inside a block (`Skip: F2 covers this`, the quoted note) are references, not targets. The tag is not part of the ID, and an annotation may contradict it.
-- Vocabulary: `take`, `skip`, `fold into <id>` — case-insensitive. `fold into <id>` = covered by that finding; don't post separately, record as folded.
-- Text outside the vocabulary (a question, "wrong line range", a request for a new finding) applies **nothing**. Answer it, then re-gate on a **delta file** — `$GITDIR/mr-review-$SLUG-round<n>.md` holding only the new or changed blocks in full (metadata line, `**Default:**`, `---`) plus one line naming the untouched findings with their standing defaults. Never re-present the full write-up: the reader cannot tell what changed. Approve on the delta applies the standing defaults and the delta's own.
-- Can't map to exactly one finding → **ask**. Never guess, never fall back to the default.
-
-**Print an applied/skipped/folded receipt** naming every finding before posting — the last thing the user sees before notifications fire.
-
-**Silence is never consent.** Only an affirmative payload posts: `approved`, or `annotated`. `dismissed` (`{"decision": "dismissed"}`, or exit 0 with empty output) and any unrecognised payload abort. **No answer at all** — binary missing, browser never opened, non-zero exit with empty stdout, process died before emitting JSON — is the only case that routes to the fallback. *Abort when an answer came back and wasn't approval; fall back only when no answer could be obtained.*
-
-**7c-fallback. No plannotator.** Guard with `command -v plannotator`. Take this path on absence or **no payload**; a non-zero exit that still carried a payload goes through the table above.
+**7c. Curate.**
 
 1. Print the absolute path, severity count, discrepancy report, overview table, `excluded, and why` lines. **Then END YOUR TURN** — a message that asks nothing. "Before" is a turn boundary, not text order.
 2. In a *later* turn, two sequential numbered plain-text prompts. Prompt 1: Recommended only, default all, reply with numbers to drop; **wait**. Prompt 2: Optional only, default none unless named; skip when empty.
@@ -322,11 +288,13 @@ Recommended → heading tag `[Rec]` and `**Default:** take`; Optional → headin
 
 Order by severity. Never mix buckets. No reply → stop; don't post.
 
+**Print a posted/skipped receipt** naming every finding before posting — the last thing the user sees before notifications fire.
+
 ### 8. Post the selected findings
 
 **`--headless`:** never reached — write the two output files and end; see [Headless mode](#headless-mode---headless).
 
-**Post through the `posting-mr-notes` skill** when it is installed: batch JSON, dry run, then **end the turn** on `Reply "post" to send N notes to MR !<iid>.` and post only after that reply. The gate's `approved` chooses the notes but does not authorize the post: it arrives in a background-task notification that tells the auto-mode classifier it is not user input, so posting on it alone gets denied.
+**Post through the `posting-mr-notes` skill** when it is installed: batch JSON, dry run, then **end the turn** on `Reply "post" to send N notes to MR !<iid>.` and post only after that reply. The curation replies choose the notes; the post still waits for that explicit "post".
 
 **`--dry-run`**: skip the POSTs; print each payload as the receipt so the user can check anchors and body text, prefixed `[DRY-RUN] Would post 8 notes to MR !<iid>`.
 
@@ -403,24 +371,21 @@ The per-finding blocks in the write-up file (Step 7a). A block holds the reviewe
 > **Fix:** move the `try/except BusinessRuleViolationError` outside
 > `async with get_request_uow(request)`. Reordering the service alone is not enough.
 
-**Default:** take — annotate this block with `skip` to drop it, or `fold into <id>`.
-
 ---
 ```
 
 **Rules:**
 
-- **Heading: `### <id>[Rec|Skip] - <headline>`.** ID, recommendation tag, headline — nothing else. The tag is the bucket from 7b: `[Rec]` for Recommended, `[Skip]` for Optional, so the call is readable from the outline without opening the block. The heading is also the table's link target and the annotation anchor; a 120-character headline fails all three jobs.
+- **Heading: `### <id>[Rec|Skip] - <headline>`.** ID, recommendation tag, headline — nothing else. The tag is the bucket from 7b: `[Rec]` for Recommended, `[Skip]` for Optional, so the call is readable from the outline without opening the block. The heading is also the table's link target; a 120-character headline fails both jobs.
 - **One metadata line under the heading**, `·`-separated, in order: severity, anchor(s) as code spans, verification delta flag.
   - Bucket does not repeat here — the heading tag carries it.
   - Anchors are code spans (`` `services.py:120` ``); chain with `→` when the fix spans two places. No line → `(file-level)` or the path it concerns; a `D` finding → `(MR description)`. Match the table's Anchor column.
   - Delta flag: 2–4 words as `verification **<flag>**` — label plain, flag bold. Typical: verified as claimed, corrected the remedy, inverted the diagnosis, widened the line range, downgraded to partial; coin one when none fits.
 - **`**My read.**` is for the user only — never posted.** `Take:` or `Skip:`, then one sentence why. A second sentence only when verification corrected the reviewer ("Verification inverted the diagnosis: …") or the fix lies outside the diff's hunks or wider than this branch.
 - **The note, quoted**: the finding's [note body](#note-body) verbatim, `> ` on every line and `>` on blank ones. The reader sees exactly what gets posted.
-- **`**Default:**` is the last line** before the separator: the disposition that applies on silence and the words that override it. Recommended → `take`; Optional → `skip`. The gate reads this.
-- **Heading tag, `**My read.**` and `**Default:**` agree** — `[Rec]` ⇔ `Take:` ⇔ take ⇔ Recommended, `[Skip]` ⇔ `Skip:` ⇔ skip ⇔ Optional. A `Take:` read at `low`/`nit` is the Recommended criterion for that severity (7b), so bucket it Recommended and tag it `[Rec]`. A `Take:` read on a `risky` fix is the read being wrong — precedence keeps the bucket Optional, so the read becomes `Skip:` with the caveat named. When the three disagree at write time, one of them is wrong; fix it before the next block.
+- **Heading tag and `**My read.**` agree** — `[Rec]` ⇔ `Take:` ⇔ Recommended, `[Skip]` ⇔ `Skip:` ⇔ Optional. A `Take:` read at `low`/`nit` is the Recommended criterion for that severity (7b), so bucket it Recommended and tag it `[Rec]`. A `Take:` read on a `risky` fix is the read being wrong — precedence keeps the bucket Optional, so the read becomes `Skip:` with the caveat named. When they disagree at write time, one of them is wrong; fix it before the next block.
 - **`---` between every finding**, including within a cluster.
-- **Cluster when findings share a mechanism**: `## Cluster A — <the mechanism>` plus one line on how they interact ("F1's write-back closes F6"). Every finding inside keeps its full block, metadata line, `**Default:**` and `---`.
+- **Cluster when findings share a mechanism**: `## Cluster A — <the mechanism>` plus one line on how they interact ("F1's write-back closes F6"). Every finding inside keeps its full block, metadata line and `---`.
 - **Overview table first** — after the counts and excluded lines, before the clusters; it covers every finding.
 
 ## Note body
@@ -462,7 +427,7 @@ Rules:
 
 For an unattended caller: a local daemon running `claude -p --permission-mode dontAsk` in a detached worktree checked out at the MR head. It wants the review, the verification and the buckets; it gates and posts itself, from the files this mode writes. There is no `glab` and nobody to answer.
 
-**Never ask anything.** No `AskUserQuestion`, no plannotator, no plain-text question that waits for a reply. Where a step would ask, take the path below.
+**Never ask anything.** No `AskUserQuestion`, no plain-text question that waits for a reply. Where a step would ask, take the path below.
 
 | Step | Headless |
 |---|---|
@@ -471,7 +436,7 @@ For an unattended caller: a local daemon running `claude -p --permission-mode do
 | 3 | Unchanged. |
 | 4 | Build the intent summary (the reviewer needs it); skip the discrepancy flags and `D` findings. The caller runs its own description check. |
 | 5–6 | Unchanged. |
-| 7 | Classify (7b) and build the 7a write-up as usual, without the discrepancy report, written to `<out>/review.md`. No `$GITDIR` file, no terminal hand-over, no plannotator, no 7c. |
+| 7 | Classify (7b) and build the 7a write-up as usual, without the discrepancy report, written to `<out>/review.md`. No `$GITDIR` file, no terminal hand-over, no 7c. |
 | 8–9 | Don't run. Nothing is posted. |
 
 **Output** — exactly two files in `--out`, nothing written anywhere else:
@@ -552,9 +517,9 @@ The caller already reviewed this MR up to `<sha>`; the author has since added co
 
 **Verification fan-out.** LLM reviewers pattern-match on diff text and over-trigger; verification catches that before the user filters 30 items by hand. **Discrepancy report.** Finding-level review misses "is this MR doing what it claims?" — often where the biggest issue is. The verdict lives in the heading because a report without one reads as background prose and gets skipped even when it flags a mismatch. Each flag also becomes a `D` finding: a mismatch you can only read about never reaches the author.
 
-**Curation gate.** A report and its first prompt in one turn ask the user to curate findings they never read. A stopped turn proves the assistant stopped talking, not that anyone read anything; a blocking `plannotator annotate --gate` can't return until they have.
+**Turn break before curation.** A report and its first prompt in one turn ask the user to curate findings they never read. Ending the turn on the report puts the reading before the question.
 
-**Per-finding `**Default:**`.** Recommended and Optional have opposite defaults (all out unless subtracted vs none out unless named); one flat list can't express that. Stating the default in each block does, next to the prose that justifies it. The two sequential prompts survive as the fallback, keeping the split and the turn break.
+**Two prompts, not one list.** Recommended and Optional have opposite defaults (all out unless subtracted vs none out unless named); one flat list can't express that. Two sequential prompts can, one default each.
 
 **Text, never `AskUserQuestion`.** Its countdown assumes a default on expiry, and the decision here is "post to a shared MR". Its labels also truncate; numbered text has no 4-option ceiling.
 
