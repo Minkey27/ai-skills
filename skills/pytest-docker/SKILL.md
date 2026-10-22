@@ -92,7 +92,7 @@ docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/ -q -n 
 ```
 
 No `-x` — collect every failure. Runs **once per plan or session, by the
-controller**. The close of `finalize-branch` Step 2 (after the simplify commit,
+controller**. The close of `finalize-branch` Step 1 (after the simplify commit,
 before squash) is the default moment, not the only permitted one — invoke it when
 a run is genuinely warranted. What is forbidden is starting a second run on your
 own initiative: CI runs the suite on every push, and the local run exists to

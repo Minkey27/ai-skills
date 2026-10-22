@@ -25,7 +25,7 @@ One optional argument: `yolo`. It removes exactly one prompt — the Step 2 grou
 
 The branch may be based off the default branch or off another feature branch. Using the wrong base will destroy commits that don't belong to this branch.
 
-**Detection:** score every local and `origin/` ref by how many commits HEAD has made since diverging from it. The fewest wins. This is the same loop as `finalize-branch` Step 4a.
+**Detection:** score every local and `origin/` ref by how many commits HEAD has made since diverging from it. The fewest wins. This is the same loop as `finalize-branch` Step 3a.
 
 ```bash
 DEFAULT=${AI_SKILLS_TARGET_BRANCH:-$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')}
@@ -332,7 +332,7 @@ GIT_EDITOR=true git rebase --continue
 | Recommending a single commit because `reset --soft` carries no conflict risk | Safety is Step 4's diff check, not the grouping. Recommend the split a reviewer reads fastest; the mechanics follow from the grouping, never the reverse |
 | Losing changes during reorder | Step 4's tree check catches this, so never skip it |
 | Skipping tests after a conflicted squash | Hand-resolved conflicts are the one place a squash can change behaviour — Step 5 runs the suite then, and only then; a conflict-free squash skips it on the strength of Step 4's clean diff-check |
-| Force-pushing without telling user | Run standalone: remind the user the branch needs a force-push and confirm before pushing. Called from `finalize-branch`: don't push at all, its Step 4e pushes with a pinned lease |
+| Force-pushing without telling user | Run standalone: remind the user the branch needs a force-push and confirm before pushing. Called from `finalize-branch`: don't push at all, its Step 3e pushes with a pinned lease |
 | Assuming base is always the default branch | Branch may be stacked on another feature branch, so always run Step 0 to detect the real base |
 | Scoring base candidates by containment | Every branch merged into the default is an ancestor of HEAD. Score by commits since divergence (Step 0) |
 | Squashing on a parent that was force-pushed after the fork | Its old commits are still in the branch. Step 1 stops; restack with `rebase-on-epic`, then squash |

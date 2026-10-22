@@ -1,15 +1,17 @@
 ---
 name: finalize-branch
-description: Use when implementation is complete and you want to review, simplify, squash, and create an MR — the full post-implementation finalization workflow before sending work for review. Pass `yolo` as an argument to skip the simplify/squash confirmation gates while still letting the user curate which code-review findings to fix.
+description: Use when implementation is complete and you want to simplify, squash, open a draft MR and post the code-review findings on it as threads, the full post-implementation finalization workflow before sending work for review. The findings are answered later, outside this skill (Battle Station's My merge requests page). Pass `yolo` as an argument to skip the simplify/squash confirmation gates.
 ---
 
 # Finalize Branch
 
 ## Overview
 
-Chains four post-implementation steps: code review, simplify, squash, MR creation. Review it, clean it, squash it, ship it.
+Chains four post-implementation steps: simplify, squash, draft MR, code review posted on that MR. Clean it, squash it, open it, review it.
 
-**Announce at start:** "I'm using the finalize-branch skill to review, simplify, squash, and create an MR for this branch." In yolo mode add: "Running in **yolo** mode — auto-applying simplify and squash without confirmation gates. Code-review findings will still be curated by you."
+The review findings go up unchecked, one thread per finding, on your own draft MR. Nothing here decides which to fix. Battle Station's My merge requests page treats a comment of yours that nobody answered as a thread waiting on you: Draft answers checks each one, and you pick fix, reply or ticket there.
+
+**Announce at start:** "I'm using the finalize-branch skill to simplify, squash, open a draft MR, and post the review findings on it." In yolo mode add: "Running in **yolo** mode: simplify and squash apply without confirmation gates."
 
 ## Arguments
 
@@ -17,12 +19,12 @@ One optional argument — the literal text after `/finalize-branch`.
 
 | Arg | Effect |
 |---|---|
-| _(none)_ | **Gated mode** (default). User confirms between Steps 1→2, 2→3, 3→4. |
-| `yolo` (also `--yolo`, `auto`, `-y`) | **Yolo mode.** Gates between Steps 2→3→4 are removed. Step 1 keeps finding curation — that's selection, not gating. |
+| _(none)_ | **Gated mode** (default). User confirms between Steps 1→2 and 2→3. |
+| `yolo` (also `--yolo`, `auto`, `-y`) | **Yolo mode.** Both gates are removed. |
 
 Match case-insensitively against `^(yolo|--yolo|auto|-y)$`. Anything else → ask what was meant.
 
-**Yolo does not change:** pre-flight checks; Step 1's verification fan-out and curation gate; the `squash` sub-skill's diff-verification and base-branch question.
+**Yolo does not change:** pre-flight checks; the target-branch question in Step 3a; the `squash` sub-skill's diff-verification and base-branch question.
 
 ## Config
 
@@ -68,196 +70,61 @@ digraph finalize {
     node [shape=box];
 
     preflight [label="Pre-flight checks"];
-    review [label="Step 1: requesting-code-review"];
-    verify [label="Fan out sub-agents\nto verify findings (one per file)"];
-    present [label="Write the write-up file\n(index, table, finding blocks)"];
-    curate [label="Curation prompts\n(two turns, sequential)" shape=diamond];
-    fix [label="Fix selected findings\n+ commit"];
+    simplify [label="Step 1: Simplify\n(auto-applies in yolo)"];
+    suite [label="Step 1 close: full test suite\n(project test-runner skill)"];
     gate1 [label="User confirms\n(skipped in yolo)" shape=diamond];
-    simplify [label="Step 2: Simplify\n(auto-applies in yolo)"];
-    suite [label="Step 2 close: full test suite\n(project test-runner skill)"];
+    squash [label="Step 2: Squash\n(yolo: takes squash's recommended grouping)"];
     gate2 [label="User confirms\n(skipped in yolo)" shape=diamond];
-    squash [label="Step 3: Squash\n(yolo: takes squash's recommended grouping)"];
-    gate3 [label="User confirms\n(skipped in yolo)" shape=diamond];
-    mr [label="Step 4: Create MR"];
+    mr [label="Step 3: Create draft MR"];
+    review [label="Step 4: requesting-code-review"];
+    post [label="Post one thread per finding"];
     done [label="Done" shape=doublecircle];
 
-    preflight -> review -> verify -> present -> curate -> fix -> gate1;
-    gate1 -> simplify [label="proceed"];
-    simplify -> suite -> gate2 -> squash [label="proceed"];
-    squash -> gate3 -> mr [label="proceed"];
-    mr -> done;
+    preflight -> simplify -> suite -> gate1;
+    gate1 -> squash [label="proceed"];
+    squash -> gate2 -> mr [label="proceed"];
+    mr -> review -> post -> done;
 }
 ```
 
-### Step 1: Code Review (with verification + curation)
-
-Identical in both modes: the curation prompts *are* the confirmation.
-
-**REQUIRED SUB-SKILL:** `requesting-code-review` — dispatches one reviewer sub-agent over the git range and returns a prose review (Strengths / Critical / Important / Minor / Assessment).
-
-SHAs from the merge-base, never the remote branch directly:
-
-```bash
-git fetch origin "${AI_SKILLS_TARGET_BRANCH:-main}" --quiet
-BASE_SHA=$(git merge-base "origin/${AI_SKILLS_TARGET_BRANCH:-main}" HEAD)
-HEAD_SHA=$(git rev-parse HEAD)
-```
-
-Reviewer template: `DESCRIPTION` = what the branch built (from `git log` over the range); `PLAN_OR_REQUIREMENTS` = the plan file or ticket if one exists, otherwise say so rather than inventing requirements.
-
-**1a. Structure the findings.** Convert the reviewer's `Issues` into the list below. Severity mapping: `Critical` → `critical` (or `high` when no data-loss/security impact); `Important` → `medium` (or `high` when it breaks a user-visible path); `Minor` → `low`; style → `nit`. Ignore `Strengths`, `Recommendations`, `Assessment` — the verdict is not a gate.
-
-```
-{
-  "id": "F1",
-  "severity": "critical|high|medium|low|nit",
-  "file": "path/to/file.py",
-  "line_start": 42,
-  "line_end": 42,
-  "title": "short headline",
-  "issue": "what the reviewer says is wrong",
-  "recommendation": "what the reviewer suggests"
-}
-```
-
-No line numbers → leave null, treat as file-level. Never invent them.
-
-**1b. Group findings by file; one sub-agent per file, in parallel.** Single message, many tool calls; `general-purpose` type, `model: sonnet` — a bounded read-and-judge task; the reviewer stays on the session model for recall.
-
-Per file, not per finding: it collapses redundant reads, and — more important — **a recommendation is often only wrong next to another finding on the same file.** One false positive can be exactly what makes a second finding's cheap remedy wrong. A per-finding agent can't see that; task 3 asks for it.
-
-Findings with no `file` get one brief of their own. Cap a wave at ~8 sub-agents; more files → consecutive waves.
-
-```
-Verify these code-review findings against the actual code on the current branch.
-
-File: <file>
-
-Findings:
-  [<id>] Lines: <line_start>-<line_end>  (or "file-level")
-         Issue: <issue text>
-         Recommendation: <recommendation text>
-  [<id>] ... (repeat per finding on this file)
-
-Tasks:
-  1. Read the file and the surrounding context for every cited location before
-     judging any of them. If the lines have shifted, find the equivalent location.
-  2. For each finding: confirm whether the described issue is actually present at
-     the cited location on the current branch, and independently judge whether the
-     recommendation, if applied, would resolve it without introducing a new problem.
-  3. Check the findings against each other. Say so explicitly if one being wrong, or
-     one being applied, changes whether another is real or makes another's
-     recommendation wrong — that interaction is invisible to anyone reading a single
-     finding in isolation.
-
-Report per finding id, as briefly as the verdict allows:
-  - issue_real: yes / no / partial — with one-sentence reason
-  - fix_sound:  yes / no / risky   — with one-sentence reason
-  - corrected_lines: <if the line numbers were wrong, give the right ones>
-  - notes: anything else worth knowing, including any interaction found in task 3
-
-Report what the code shows; don't restate the finding.
-```
-
-Aggregate into a table keyed by finding id.
-
-**1c. Write the findings up, then hand them over.** The user must be able to read what each finding *is*, the *suggested fix*, and what verification concluded before deciding anything.
-
-**Classify first** (bucket table in 1d): the bucket sets each block's heading tag.
-
-**Location.** Always a file. `GITDIR="$(git rev-parse --absolute-git-dir)"`, `SLUG="$(git rev-parse --abbrev-ref HEAD | tr '/' '-')"`, write to `$GITDIR/review-$SLUG.md` — never committed, invisible to `git status`, isolated per worktree, no `.gitignore` edit.
-
-The file stands alone. In order:
-
-1. **Meta block** — branch, commit range, file/line counts, ticket reference when the branch or commits carry one.
-2. **One-line count by severity**, then the `dropped, and why` line naming every verified false positive (`issue_real == no`) with a few-word reason — not decision options, listed so the user knows they were considered.
-3. **Overview table** — the scan layer and index. `ID` links to the finding's anchor. `Headline` repeats the heading's headline verbatim, so a row is readable without opening the block.
-
-   ```
-   | ID | Headline | Sev | Anchor | Real? | Fix sound? | Bucket |
-   |----|----------|-----|--------|-------|------------|--------|
-   | [F1](#f1rec---duplicate-afdeling-enum) | duplicate Afdeling enum | medium | services.py:120 | ✓ yes | ✓ yes | Recommended |
-   | [F2](#f2skip---stale-cache-key) | stale cache key | low | (file-level) | ✓ yes | ⚠ risky | Optional |
-   ```
-
-   Anchors assume GitHub-style slugs (lowercase, brackets dropped, the ` - ` separator collapsing to three hyphens, spaces → hyphens). If your Markdown viewer slugifies differently the links just don't jump; they are navigation only.
-
-4. **Cluster sections and finding blocks** — see [Finding write-up format](#finding-write-up-format).
-
-**1d. Buckets and curation.** Exactly one bucket per shown finding, decided before the document is written:
-
-| Bucket | Rule | Heading tag |
-|---|---|---|
-| **Recommended** | `issue_real ∈ {yes, partial}` AND `fix_sound != no` AND (severity ∈ {`critical`, `high`, `medium`} OR `**My read.**` is take at `low`/`nit`) | `[Rec]` |
-| **Optional** | shown but not recommended: `low`/`nit` with a `skip` read, or `fix_sound == risky` (real but the fix has caveats) | `[Skip]` |
-
-> **Precedence:** `medium`+ with `fix_sound == risky` → **Optional**. A caveated fix is not auto-recommended; the user opts in deliberately.
-
-> **`partial` counts as real.** It usually means the bug is real but the reviewer's trigger diagnosis was wrong. Fix the corrected version from the verification report, not the original claim.
-
-Verified false positives (`issue_real == no`) get no bucket; they live in the `dropped, and why` line only.
-
-Then curate:
-
-1. Print the absolute path, then the whole write-up as your message text (not with `cat`: tool output is not reliably shown to the user). **Then END YOUR TURN** — a message that asks nothing. A same-turn prompt means the user picks findings they never read; "before" is a turn boundary, not text order.
-2. In a *later* turn, two sequential numbered plain-text prompts — **never `AskUserQuestion`**. Prompt 1: Recommended only, default all, reply with numbers to drop (or "go" / "none"); **wait**. Prompt 2: Optional only, opposite default — nothing is fixed unless named; skip when empty.
-3. One line per finding: `[F3 medium] services.py:120 — duplicate enum 'Afdeling'` plus a verification flag in parentheses where one applies. Detail is in the printed write-up.
-
-```markdown
-**Recommended — 3 findings.** Default is all of them. Reply with numbers to drop, or "go".
-
-1. [F1 high] downloads.py:64 — IDOR on document download  (✓ verified)
-2. [F3 medium] services.py:120 — duplicate 'Afdeling' enum  (⚠ lines shifted to 125–128)
-3. [F5 medium] handlers.py:2455 — as_of not threaded  (✓ verified)
-```
-
-Numbered text has no 4-option ceiling — one prompt per bucket, never fragmented. Order by severity. Never mix buckets. No reply → stop; don't apply the default.
-
-**Print an applied/skipped receipt** naming every finding before doing any work.
-
-**1e. Fix the selected findings, commit.** Skip unselected ones. The message names what was fixed (`fix: close idor on document download, dedupe afdeling enum`) — never session-local ids (`F1`, `F3`).
-
-**1f. Gate transition.** Gated: ask "Proceed to Step 2 (simplify)?". Yolo: proceed in the same turn.
-
-### Step 2: Simplify
+### Step 1: Simplify
 
 **REQUIRED SUB-SKILL:** `simplify` (code-simplifier agent) if available. It proposes clarity/consistency improvements on the branch's recently modified code.
 
-**Gated:** present the proposals; the user approves or rejects each; commit the approved ones; **GATE** before Step 3.
+**Gated:** present the proposals; the user approves or rejects each; commit the approved ones; **GATE** before Step 2.
 
-**Yolo:** apply everything the simplifier returns; print a short summary (file + one line per change); commit `refactor: simplify per code-simplifier`; proceed to Step 3 in the same turn.
+**Yolo:** apply everything the simplifier returns; print a short summary (file + one line per change); commit `refactor: simplify per code-simplifier`; proceed to Step 2 in the same turn.
 
-**Step 2 close — full test suite, once.** After the last Step 2 commit and before
+**Step 1 close — full test suite, once.** After the last Step 1 commit and before
 the gate, run the project's full suite through its test-runner skill
 (`pytest-docker` Tier 2 where that skill is installed; otherwise the project's
 documented full-suite command). This is the branch's single local full-suite
 run: implementers run only targeted tests, and nothing between tasks does, so
 this is where a cross-cutting break surfaces before the MR round-trip. Fix
-failures, commit, re-run once; the squash in Step 3 folds the fix. Every failure
+failures, commit, re-run once; the squash in Step 2 folds the fix. Every failure
 on the branch is the branch's own. In yolo the run still happens — only the gate is skipped.
 
-### Step 3: Squash
+### Step 2: Squash
 
 **REQUIRED SUB-SKILL:** `squash`
 
-**Gated:** invoke `squash` plainly — it presents its grouping and waits. **Yolo:** invoke `squash yolo` — it prints the recommendation and executes it without waiting. Its diff-verification and base-branch question are safety, not approval: never overridden, yolo included. Its Step 5 test run fires only after a squash with hand-resolved conflicts; otherwise the Step 2-close run stands and the squash report says so.
+**Gated:** invoke `squash` plainly — it presents its grouping and waits. **Yolo:** invoke `squash yolo` — it prints the recommendation and executes it without waiting. Its diff-verification and base-branch question are safety, not approval: never overridden, yolo included. Its Step 5 test run fires only after a squash with hand-resolved conflicts; otherwise the Step 1-close run stands and the squash report says so.
 
-**Gated:** after squash, **GATE** before Step 4. **Yolo:** proceed to Step 4 in the same turn.
+**Gated:** after squash, **GATE** before Step 3. **Yolo:** proceed to Step 3 in the same turn.
 
-### Step 4: Create MR
+### Step 3: Create MR
 
 One path for GitHub and GitLab; only the final create/update command differs on `${AI_SKILLS_MR_TOOL:-gh}`.
 
-**State across blocks.** Each fenced `bash` block is a separate Bash invocation — variables don't survive, files do. Two values can't be re-derived later (`$UPSTREAM_SHA` must be read *before* 4a's fetch; `$TARGET` may have been settled by the user), so 4a writes them to a state file every later block re-sources:
+**State across blocks.** Each fenced `bash` block is a separate Bash invocation — variables don't survive, files do. Two values can't be re-derived later (`$UPSTREAM_SHA` must be read *before* 3a's fetch; `$TARGET` may have been settled by the user), so 3a writes them to a state file every later block re-sources, through the end of Step 4:
 
 ```bash
 STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
 ```
 
-`$STATE` is a constant expression re-derived in every block, landing under the current worktree's git directory (`<main-repo>/.git/worktrees/<name>/mr-state.sh` in a linked worktree) — never shared `/tmp`, where concurrent worktrees would collide. 4a truncates it (`: >`) so a stale file can't leak into this run. Values are appended with `printf '%q'` so spaces and metacharacters survive.
+`$STATE` is a constant expression re-derived in every block, landing under the current worktree's git directory (`<main-repo>/.git/worktrees/<name>/mr-state.sh` in a linked worktree) — never shared `/tmp`, where concurrent worktrees would collide. 3a truncates it (`: >`) so a stale file can't leak into this run. Values are appended with `printf '%q'` so spaces and metacharacters survive.
 
-**4a. Target branch.** Never assume `main`: branches are often stacked on an epic branch, and retargeting one at `main` proposes merging unreviewed upstream work.
+**3a. Target branch.** Never assume `main`: branches are often stacked on an epic branch, and retargeting one at `main` proposes merging unreviewed upstream work.
 
 ```bash
 STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
@@ -265,7 +132,7 @@ STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
 
 BRANCH=$(git branch --show-current)
 
-# Captured BEFORE the fetch below — this is the value the force-push lease in 4e pins
+# Captured BEFORE the fetch below — this is the value the force-push lease in 3e pins
 # against. Empty when the branch has no upstream yet.
 UPSTREAM_SHA=$(git rev-parse "@{u}" 2>/dev/null || true)
 
@@ -307,7 +174,7 @@ TARGET="<settled branch name, no origin/ prefix>"
 printf 'TARGET=%q\n' "$TARGET" >> "$STATE"
 ```
 
-**4b. Ticket** — before drafting; it is the body's first line:
+**3b. Ticket** — before drafting; it is the body's first line:
 
 ```bash
 STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
@@ -331,7 +198,7 @@ With a tracker MCP (ClickUp/Jira/Linear), read the ticket **for intent only** �
 
 `Closes <TICKET>` goes first — keyword, space, id, nothing else on the line. Automation parses it to transition the ticket; a reworded line silently strands it. Omit the line when there is no ticket.
 
-**4c. Draft.** Re-read the diff (`git diff $BASE_SHA..HEAD`) and write from it, not from memory of implementing — session memory narrates the journey, which no reviewer asked for. Title and body go to files under the worktree's git directory, not shared `/tmp`:
+**3c. Draft.** Re-read the diff (`git diff $BASE_SHA..HEAD`) and write from it, not from memory of implementing — session memory narrates the journey, which no reviewer asked for. Title and body go to files under the worktree's git directory, not shared `/tmp`:
 
 ```bash
 TITLE_FILE="${MR_TITLE_FILE:-$(git rev-parse --git-path mr-title.txt)}"
@@ -340,16 +207,16 @@ BODY_FILE="${MR_BODY_FILE:-$(git rev-parse --git-path mr-body.md)}"
 
 Constant expressions like `$STATE` — re-derive per block. Body starts with `Closes $TICKET` when set. Announce title and body in your response before creating. If the environment mandates a scratchpad, point `MR_TITLE_FILE` / `MR_BODY_FILE` inside it. Follow `.gitlab/merge_request_templates/` or `.github/pull_request_template.md` when present.
 
-**4d. Deletion pass.** Check every bullet against the diff: **if a reviewer would already know it from the file list or the code, cut it.**
+**3d. Deletion pass.** Check every bullet against the diff: **if a reviewer would already know it from the file list or the code, cut it.**
 
-**4e. Push, then create or update.**
+**3e. Push, then create or update.**
 
 ```bash
 STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
 . "$STATE"
 
 if [ -z "${UPSTREAM_SHA:-}" ]; then
-  # No upstream existed at 4a — nothing to protect, a first push cannot clobber.
+  # No upstream existed at 3a — nothing to protect, a first push cannot clobber.
   git push -u origin "$BRANCH"
 else
   git push -u origin "$BRANCH" \
@@ -357,7 +224,7 @@ else
 fi
 ```
 
-Plain push is rejected as non-fast-forward when Step 3's squash rewrote pushed history. The retry pins `--force-with-lease` to `$UPSTREAM_SHA` from **4a, before the fetch**. An unpinned lease re-reads the remote-tracking ref, which 4a's `git fetch origin` already refreshed to whatever is on the remote now — a teammate's commit included — so it would authorise the exact overwrite it exists to prevent.
+Plain push is rejected as non-fast-forward when Step 2's squash rewrote pushed history. The retry pins `--force-with-lease` to `$UPSTREAM_SHA` from **3a, before the fetch**. An unpinned lease re-reads the remote-tracking ref, which 3a's `git fetch origin` already refreshed to whatever is on the remote now — a teammate's commit included — so it would authorise the exact overwrite it exists to prevent.
 
 On **`gh`**:
 
@@ -429,73 +296,77 @@ echo "open MRs on $BRANCH: ${OPEN:-none}"
 
 - **Two or more** → **stop.** Update nothing; ask which IID, listing them.
 
-**Clean up** once the URL is in hand — a stale state file is a hazard for the next run:
+Go on to Step 4 with the MR/PR URL in hand.
+
+### Step 4: Review and post
+
+No gate before it. Posting every finding is this step's whole job, so the run itself is the ask to post (the exception in `posting-mr-notes` step 3). On `gh` there is no thread workflow to hand off to: print the review as the closing report and skip 4b and 4c.
+
+**4a. Review.** **REQUIRED SUB-SKILL:** `requesting-code-review` over `$BASE_SHA..HEAD`. `$BASE_SHA` is the merge-base with the target settled in 3a, so a branch stacked on an epic is reviewed against the epic.
+
+```bash
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
+. "$STATE"
+echo "BASE_SHA=$BASE_SHA HEAD_SHA=$(git rev-parse HEAD)"
+```
+
+Reviewer template: `DESCRIPTION` = what the branch built (from `git log` over the range); `PLAN_OR_REQUIREMENTS` = the plan file or ticket if one exists, otherwise say so rather than inventing requirements.
+
+**4b. One thread per finding.** Every entry under the reviewer's `Issues` becomes a thread; ignore `Strengths`, `Recommendations` and `Assessment`. Don't check, rank or drop findings here: Draft answers in Battle Station checks each one, and paying for that twice buys nothing.
+
+Fetch the MR's identifiers and `diff_refs` once the review is back:
+
+```bash
+STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
+. "$STATE"
+
+IID=$(glab api "projects/:id/merge_requests?source_branch=$BRANCH&state=opened" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['iid'])")
+glab api "projects/:id/merge_requests/$IID" | python3 -c "
+import json, sys
+m = json.load(sys.stdin)
+print('project', m['project_id'], 'iid', m['iid'], m['web_url'])
+print('diff_refs', json.dumps(m['diff_refs']))"
+echo "HEAD $(git rev-parse HEAD)"
+```
+
+`diff_refs.head_sha` must equal `HEAD`. When it doesn't, GitLab is still processing the push; fetch again.
+
+A finding cited on an **added** line goes up as a `diff` note: run `git diff -U0 <diff_refs.base_sha>..HEAD -- <file>`, and the line is added when a hunk header `@@ -a,b +c,d @@` has `c <= line < c+d`. Its position is `position_type: "text"`, the three `diff_refs` SHAs, `new_path`/`old_path`, `new_line`, `old_line: null`. Every other finding (a context or removed line, or no line at all) goes up as a `thread` with no position. GitLab refuses a context line outside the hunks it renders, and a thread always posts.
+
+Body, with the severity from the reviewer's heading (`Critical` → `critical`, `Important` → `medium`, `Minor` → `low`, style → `nit`). The anchor line appears only in a `thread`, where no position carries it:
+
+```markdown
+**medium: duplicate Afdeling enum**
+
+`services.py:120`
+
+<what the reviewer says is wrong>
+
+**Fix.** <what the reviewer suggests>
+```
+
+**4c. Post.** **REQUIRED SUB-SKILL:** `posting-mr-notes`. Write the batch with the `Write` tool to `$(git rev-parse --absolute-git-dir)/review-notes.json`, or inside the scratchpad when the environment mandates one. Dry run, then the bare post command. A `FAILED` diff note goes up again as a `thread`, in a batch holding only those. A denied post follows that skill's denial path: say what was posted and ask for "post". No findings → post nothing.
+
+**4d. Report and clean up.** The MR/PR URL, the number of threads posted, and one line: answer them in Battle Station, whose poll picks them up as threads waiting on you (Fetch threads on the MR page does it now). Then remove the state file; a stale one is a hazard for the next run:
 
 ```bash
 rm -f "${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
 ```
 
-Return the MR/PR URL.
-
 ## Red Flags
 
 Each rule in the body carries its reason there. These are the ones it does not state:
 
-- Ask every gate and curation question in plain text with numbered options, never `AskUserQuestion`: its countdown assumes a default, and "which findings do I fix" and "may I force-push" must not be answerable by a timer.
+- Ask every gate question in plain text with numbered options, never `AskUserQuestion`: its countdown assumes a default, and "may I force-push" must not be answerable by a timer.
 - Mark the MR draft with `--draft`, never with a `Draft:` or `WIP:` title prefix. Pass `--draft` and `--assignee @me` on every invocation; add `--reviewer` only when `$AI_SKILLS_REVIEWERS` is non-empty.
 - Leave no literal `<TICKET>` placeholder in the description.
 - Leave out a test-plan or QA-steps section; the reviewer reads the diff and CI.
 - Run lint and format before any commit (project-specific), and commit each step's fixes before the next.
 
-## Finding write-up format
-
-The per-finding blocks in the Step 1c write-up.
-
-```markdown
-### F4[Rec] - applyAdjustFrame derefs state that can be nulled mid-POST
-`medium` · `floorplan-editor.js:1543` · verification **verified as claimed**
-
-**Problem.** `applyAdjustFrame` awaits the POST at line 1508. `adjustMode` stays `true`
-for that whole await, so anything that calls `cancelAdjust()` during it — Escape (2901),
-`setDrawMode('pan')` (531), the page-change branch (1256) — runs `_exitAdjust()` and nulls
-`adjustHandles`. Phase 2 then hits 1543 `adjustHandles.a.slice()` and throws. Pre-branch
-that deref sat inside `if (frame)`; this branch hoisted it out.
-
-**Why it bites.** The throw lands *after* the server persisted, so `loadDoors()` never
-runs and the canvas shows pre-alignment geometry for data that is already saved. Nothing
-catches it — the POST succeeded, so there is no failed request to notice.
-
-**Fix.** Two edits in `floorplan-editor.js`:
-- Snapshot both objects into locals before the Phase-1 await and use the snapshots in
-  Phase 2: `const sentA = adjustHandles.a.slice(), sentB = adjustHandles.b.slice();`
-- Reset `applyBtn.disabled = false` where the adjust toolbar is re-shown, so a session
-  cancelled mid-flight doesn't leave the button dead.
-
-**My read.** Take it — small, and it's a regression this branch introduced.
-
----
-```
-
-**Rules:**
-
-- **Heading: `### F<n>[Rec|Skip] - <headline>`.** ID, recommendation tag, headline — nothing else. The tag is the bucket from 1d: `[Rec]` for Recommended, `[Skip]` for Optional, so the call is readable from the outline without opening the block. The heading is also the table's link target; a 120-character headline fails both jobs.
-- **One metadata line under the heading**, `·`-separated, in order: severity, anchor(s) as code spans, verification delta flag.
-  - Bucket does not repeat here — the heading tag carries it.
-  - Anchors are code spans (`` `services.py:120` ``); chain with `→` when the fix spans two places. No line → `(file-level)` or the path it concerns, matching the table's Anchor column.
-  - Delta flag: 2–4 words as `verification **<flag>**` — label plain, flag bold. Typical: verified as claimed, corrected the remedy, inverted the diagnosis, widened the line range, downgraded to partial; coin one when none fits.
-- **`**Problem.**` — mechanism only, ~6 lines**: trigger, sequence, resulting state, `file:line` cited inline. Quotes and code go to `**Fix.**`; provenance ("this branch hoisted it out") goes to `**My read.**`. `inverted the diagnosis` / `corrected the remedy` carry two mechanisms, so ~8 lines; never meet the cap by dropping the correction.
-- **`**Why it bites.**` — required, separate**, 1–2 sentences: the user-visible consequence and what fails to catch it. No runtime consequence → name who is misled and when. Never invent a failure mode.
-- **Run-on bold lead-ins** ending in a period, prose on the same line. Never `**Issue:** <one line>`.
-- **`**Fix.**` is actionable** — bullet per edit when more than one; real code line, real helper, real fixture. Say when it's a pure test addition.
-- **No `**Verification:**` badge line.** Corrections are woven into the prose in your own voice ("Important correction to the original recommendation: …", "Verification downgraded this to partial: …"). The delta flag indexes that prose; it carries no reasoning. Full verdicts live in the table.
-- **`**My read.**` — one sentence**: take / skip / fold into F*n*, only when not obvious from the block. A second sentence only when it changes *handling* — outside the diff's hunks, or wider than this branch.
-- **Heading tag and `**My read.**` agree** — `[Rec]` ⇔ take ⇔ Recommended, `[Skip]` ⇔ skip ⇔ Optional. A `take` read at `low`/`nit` is the Recommended criterion for that severity (1d), so bucket it Recommended and tag it `[Rec]`. A `take` read on a `risky` fix is the read being wrong — precedence keeps the bucket Optional, so the read becomes `skip` with the caveat named. When they disagree at write time, one of them is wrong; fix it before the next block.
-- **`---` between every finding**, including within a cluster.
-- **Cluster when findings share a mechanism**: `## Cluster A — <the mechanism>` plus one line on how they interact ("F1's write-back closes F6"). Every finding inside keeps its full block, metadata line and `---`.
-- **Overview table first** — after the counts and dropped line, before the clusters; it covers every finding.
-
 ## Integration
 
-- **requesting-code-review** — Step 1 finder
-- **simplify** (code-simplifier) — Step 2
-- **squash** — Step 3
+- **simplify** (code-simplifier) — Step 1
+- **squash** — Step 2
+- **requesting-code-review** — Step 4 finder
+- **posting-mr-notes** — Step 4 poster

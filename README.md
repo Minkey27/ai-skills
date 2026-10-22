@@ -5,7 +5,7 @@ A personal collection of [Claude Code](https://docs.claude.com/en/docs/claude-co
 ## Skills included
 
 - **branch-test-review** — generate a styled HTML report of pytest tests added/modified on the current branch.
-- **finalize-branch** — review, simplify, squash, and open an MR for the current branch (including the MR title and 200-word-budgeted description); findings are curated through numbered terminal prompts.
+- **finalize-branch** — simplify, squash, and open a draft MR for the current branch (including the MR title and 200-word-budgeted description), then post the code-review findings on it as threads, to be answered outside the skill.
 - **handoff** — `/handoff` slash command: compact the current conversation into a handoff document (written to the OS temp dir) so a fresh agent can pick the work up, including a "suggested skills" section. Manual invocation only.
 - **mr-review** — `/mr-review` slash command: full review pass on the GitLab MR for the currently-checked-out branch, with per-finding verification and curated diff-note posting; findings are curated through numbered terminal prompts.
 - **process-mr-feedback** — work through the open review discussion threads on the GitLab MR for the current branch: fetch them, verify each finding against the code, curate a disposition (Fix / Push back / Dismiss / Defer), then implement, push, reply, and resolve; findings are curated through numbered terminal prompts.
