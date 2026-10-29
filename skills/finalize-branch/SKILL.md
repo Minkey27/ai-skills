@@ -71,7 +71,7 @@ digraph finalize {
 
     preflight [label="Pre-flight checks"];
     simplify [label="Step 1: Simplify\n(auto-applies in yolo)"];
-    suite [label="Step 1 close: full test suite\n(project test-runner skill)"];
+    suite [label="Step 1 close: tests sized to the change\n(project test-runner skill)"];
     gate1 [label="User confirms\n(skipped in yolo)" shape=diamond];
     squash [label="Step 2: Squash\n(yolo: takes squash's recommended grouping)"];
     gate2 [label="User confirms\n(skipped in yolo)" shape=diamond];
@@ -95,20 +95,22 @@ digraph finalize {
 
 **Yolo:** apply everything the simplifier returns; print a short summary (file + one line per change); commit `refactor: simplify per code-simplifier`; proceed to Step 2 in the same turn.
 
-**Step 1 close — full test suite, once.** After the last Step 1 commit and before
-the gate, run the project's full suite through its test-runner skill
-(`pytest-docker` Tier 2 where that skill is installed; otherwise the project's
-documented full-suite command). This is the branch's single local full-suite
-run: implementers run only targeted tests, and nothing between tasks does, so
-this is where a cross-cutting break surfaces before the MR round-trip. Fix
-failures, commit, re-run once; the squash in Step 2 folds the fix. Every failure
-on the branch is the branch's own. In yolo the run still happens — only the gate is skipped.
+**Step 1 close: tests sized to the change.** After the last Step 1 commit and
+before the gate, let the project's test-runner skill decide what still needs to
+run (`pytest-docker`: **Size it first** under Tier 2; without such a skill, the
+project's documented full-suite command, once). A full suite that already passed
+on this code, in this session or an earlier one, does not run again, and a
+contained change gets a targeted run. CI runs the full suite on every push, so
+this step catches a cross-cutting break before the MR round-trip; it does not
+repeat a green run. Fix failures, commit, re-run once; the squash in Step 2
+folds the fix. Every failure on the branch is the branch's own. In yolo the
+check still happens; only the gate is skipped.
 
 ### Step 2: Squash
 
 **REQUIRED SUB-SKILL:** `squash`
 
-**Gated:** invoke `squash` plainly — it presents its grouping and waits. **Yolo:** invoke `squash yolo` — it prints the recommendation and executes it without waiting. Its diff-verification and base-branch question are safety, not approval: never overridden, yolo included. Its Step 5 test run fires only after a squash with hand-resolved conflicts; otherwise the Step 1-close run stands and the squash report says so.
+**Gated:** invoke `squash` plainly — it presents its grouping and waits. **Yolo:** invoke `squash yolo` — it prints the recommendation and executes it without waiting. Its diff-verification and base-branch question are safety, not approval: never overridden, yolo included. Its Step 5 test run fires only after a squash with hand-resolved conflicts; otherwise the Step 1-close result stands and the squash report says so.
 
 **Gated:** after squash, **GATE** before Step 3. **Yolo:** proceed to Step 3 in the same turn.
 

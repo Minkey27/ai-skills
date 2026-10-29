@@ -32,7 +32,7 @@ Every rule here also applies to a subagent dispatched to run tests. Never run a 
 sees `.test-output.txt`.
 
 **Implementation subagents run Tier 1 only.** Tier 2 belongs to the controller,
-once per plan or session — usually at `finalize-branch`. When the dispatch prompt says "run the full suite
+at most once per branch, usually at `finalize-branch`. When the dispatch prompt says "run the full suite
 once before committing", that means the Tier 1 run, once — never `tests/`,
 `tests/unit`, `tests/integration`, or a whole context directory. If the blast
 radius truly needs the full suite, say so in your report; do not run it. The
@@ -85,25 +85,59 @@ cannot do that either → say so in the report and let the controller decide.
 - Changed a template → the route tests that render it (grep the template name under `tests/`)
 - In doubt → the integration files over the unit files; more ground per second
 
-## Tier 2 — full suite (once per plan or session)
+## Tier 2 — full suite (at most once per branch)
 
 ```bash
-docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/ -q -n 0 --tb=short > .test-output.txt 2>&1; echo "exit: $?"
+T=$(git status --porcelain | grep -q . || git rev-parse 'HEAD^{tree}')
+docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/ -q -n 0 --tb=short > .test-output.txt 2>&1; rc=$?
+[ "$rc" = 0 ] && [ -n "$T" ] && echo "$T" > "$(git rev-parse --git-dir)/full-suite-green"; echo "exit: $rc"
 ```
 
-No `-x` — collect every failure. Runs **once per plan or session, by the
-controller**. The close of `finalize-branch` Step 1 (after the simplify commit,
-before squash) is the default moment, not the only permitted one — invoke it when
-a run is genuinely warranted. What is forbidden is starting a second run on your
-own initiative: CI runs the suite on every push, and the local run exists to
-catch a cross-cutting break before the MR round-trip. Failures → fix, re-run
-once.
+No `-x` — collect every failure. Runs **at most once per branch, by the
+controller**, and only when **Size it first** below calls for it. The close of
+`finalize-branch` Step 1 is the default moment for that check. A green run from
+a clean tree records the tree it tested in the worktree's git dir, so a later
+session sees that the suite already passed on this code. What is forbidden is
+starting a run on your own initiative: CI runs the suite on every push, and the
+local run exists to catch a cross-cutting break before the MR round-trip.
+Failures → fix, re-run once.
 
 Pass the Bash tool `timeout: 600000` — the suite takes 5–8 minutes and the
 default 2-minute timeout backgrounds it. **One run at a time**: the test DB is
 shared, so a second concurrent run corrupts both. "Is it still running?" is
 answered by `.test-output.txt` — a growing file or a progress line at the tail
 means yes, a tally line means no. Never by `ps`/`pgrep` in the container.
+
+### Size it first
+
+A second green run on the same code buys nothing, so list what changed since the
+last green full run, or the whole branch when none is on record:
+
+```bash
+M="$(git rev-parse --git-dir)/full-suite-green"
+if [ -f "$M" ]; then echo "since the last green full run:"; BASE=$(cat "$M")
+else echo "no green full run on record, whole branch:"; BASE=$(git merge-base "origin/${AI_SKILLS_TARGET_BRANCH:-main}" HEAD); fi
+git diff --name-only "$BASE" HEAD
+```
+
+| The list holds | Run |
+|---|---|
+| nothing | no tests; report the earlier green run |
+| test infrastructure (`conftest.py`, fixtures, factories, pytest config), a migration, a dependency or lockfile change, or a shared module most of the app imports; a lint-only edit to `pyproject.toml` is none of these | Tier 2 |
+| anything else | collect-only, then one Tier 1 run over the listed files, plus the project's route-wide guard tests when route code is listed |
+
+Collect-only imports every test module, so a test anywhere that still imports a
+symbol the change removed or renamed fails here, about a minute:
+
+```bash
+docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" pytest tests/ --collect-only -n 0 > .test-output.txt 2>&1; echo "exit: $?"
+```
+
+Route-wide guards are tests that check every registered route against lists kept
+by hand (CSRF, auth redirects, GET smoke tests). A route added, removed or
+renamed breaks them far from the changed module, and they are named after no
+module, so the Tier 1 search never finds them. The project's CLAUDE.md or memory
+names them.
 
 ## Output handling
 
