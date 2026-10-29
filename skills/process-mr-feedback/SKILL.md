@@ -455,7 +455,7 @@ For an unattended caller: a local daemon (battlestation) running `claude -p --pe
 - `disposition` — Stage 2's default (the table there), lowercased with `_`.
 - `title` — the block heading's headline. `problem`, `why` and `fix` — the block's **Problem.**, **Why it bites.** and **Fix.** text, without their labels. For Push back and Defer, `fix` carries the reasoning or the question, as the block does.
 - `evidence` — what was read that shows the comment is wrong; required when `verdict` is `invalid`, else `null`.
-- `reply` — the note the caller posts on the thread, as written (reply tone applies). For **Fix**, one line saying what changed, without the commit: the caller posts `Fixed in <sha>: <reply>` once the fix is pushed. Dismiss: the reasoning. Push back: the technical reasoning. Defer: the question, or that it is tracked as a follow-up.
+- `reply` — the note the caller posts on the thread, as written (reply tone applies). For **Fix**, one line saying what changed, without the commit: the caller posts `Fixed in <sha>: <reply>` once the fix is pushed, or `Updated the description: <reply>` when the fix is in the MR description. Dismiss: the reasoning. Push back: the technical reasoning. Defer: the question, or that it is tracked as a follow-up.
 
 **End the turn** with one line of counts per disposition — `MR !<iid>: 2 fix, 1 push back, 1 defer → <out>`.
 
@@ -477,19 +477,22 @@ Run Stage 4 on these and nothing else, with these differences:
 - **One commit per fix**, in `--apply` order, message `fix: <what the comments asked for>` (plus `$AI_SKILLS_COMMIT_TRAILER`). Record the short sha per fix.
 - **The pre-commit gate** runs as in Stage 4. A command the session may not run counts as `not run`, not as a failure. On a failure: commit nothing more, leave the failed fix's edits in the tree, and say which in `not_fixed`; fixes committed before it stay.
 - **Never push**, never `git reset`, `checkout`, `restore`, `stash` or `rebase`.
+- **A fix that only changes the MR description** (the comments ask to correct or extend the description, and no file needs to change) has no edit and no commit. Once the commits are made, rewrite the description from `--mr-json`'s `description`: change what the comments ask, keep the rest as written, and when it walks through the commits, add the ones this run made. Every such fix shares the one rewrite. A fix that needs code changes is an ordinary fix, even when the description should change too.
 
 **Output** — one file, `<out>/fixes.json`, written last:
 
 ```json
 {
   "spec": 1,
-  "fixes": [{"discussion_ids": ["6a9c…", "71be…"], "sha": "1a2b3c4", "summary": "resolve user_roles via the repository"}],
+  "fixes": [{"discussion_ids": ["6a9c…", "71be…"], "sha": "1a2b3c4", "summary": "resolve user_roles via the repository"},
+            {"discussion_ids": ["4c1e…"], "description": true, "summary": "say the role comes from the repository"}],
   "not_fixed": [{"discussion_ids": ["9d02…"], "reason": "tests failed: test_roles.py::test_admin"}],
-  "checks": {"lint": "passed|failed|not run", "format": "passed|failed|not run", "tests": "passed|failed|not run"}
+  "checks": {"lint": "passed|failed|not run", "format": "passed|failed|not run", "tests": "passed|failed|not run"},
+  "description": "Closes BPZ-1500\n\nThe role dropdown …"
 }
 ```
 
-Every fix in `--apply` is in `fixes` or in `not_fixed`. `summary` is the commit's one line, for the caller's records; the reply the caller posts comes from `answers.json`.
+Every fix in `--apply` is in `fixes` or in `not_fixed`. A fix in the description has `"description": true` and no `sha`; `description` is then the whole new MR description, as markdown, which the caller puts on the MR. Leave `description` out when no fix is in it. `summary` is the commit's one line, or the description change's, for the caller's records; the reply the caller posts comes from `answers.json`.
 
 **End the turn** with `MR !<iid>: 2 fixed, 1 not fixed → <out>`.
 
