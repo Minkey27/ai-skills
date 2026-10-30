@@ -26,6 +26,7 @@ That makes the variables available to every shell Claude spawns. Commands below 
 | `AI_SKILLS_BACKEND_SERVICE` | `backend` | Docker-compose service for migration/lint commands |
 | `AI_SKILLS_LINT_CMD` | _(empty)_ | Command to run lint. Empty → skip lint step |
 | `AI_SKILLS_FORMAT_CMD` | _(empty)_ | Command to run formatter. Empty → skip format step |
+| `AI_SKILLS_TYPECHECK_CMD` | _(empty)_ | Command to run the type checker. Empty → skip typecheck step |
 | `AI_SKILLS_MIGRATIONS_PATH` | _(empty)_ | Path to alembic migrations dir. Empty → skip migration verification |
 | `AI_SKILLS_ALEMBIC_CMD` | _(empty)_ | Shell command that invokes `alembic` in the project env. Empty → skip migration verification |
 
@@ -42,7 +43,7 @@ Before starting, verify ALL of these:
    ```bash
    docker compose exec "${AI_SKILLS_BACKEND_SERVICE:-backend}" echo "ok"
    ```
-   If this fails: warn the user that migration verification and tests require Docker. Ask whether to proceed without them or wait. Skip this check entirely if `AI_SKILLS_ALEMBIC_CMD`, `AI_SKILLS_LINT_CMD`, and `AI_SKILLS_FORMAT_CMD` are all empty.
+   If this fails: warn the user that migration verification and tests require Docker. Ask whether to proceed without them or wait. Skip this check entirely if `AI_SKILLS_ALEMBIC_CMD`, `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, and `AI_SKILLS_TYPECHECK_CMD` are all empty.
 
 ## Step 0: Fetch and Snapshot
 
@@ -129,7 +130,7 @@ grep -r "^revision = \|^down_revision = " "$AI_SKILLS_MIGRATIONS_PATH/versions/"
 ```
 If any `down_revision` points to a revision that is NOT another branch migration AND is not main's head, there may be a fork.
 
-- **Single head** → migrations are fine, proceed to **Verification**.
+- **Single head** → migrations are fine, proceed to **Dependencies**.
 - **Multiple heads** → the branch's migrations now share a parent with migrations that landed on main. Proceed to step 2.
 
 ### 2. Identify which migrations belong to this branch
@@ -172,6 +173,15 @@ If migration files were modified, create a new commit:
 fix(migrations): re-parent branch migrations after rebase
 ```
 
+## Dependencies
+
+```bash
+B="pre-rebase/$(git branch --show-current)"
+git diff --name-only "$(git merge-base origin/main "$B")" origin/main | grep -E '(^|/)(uv\.lock|pyproject\.toml|package\.json|pnpm-lock\.yaml|Dockerfile)$'
+```
+
+Any match means main changed dependencies, so the running image is stale. Tell the user, and get the image rebuilt (`docker compose up --build -d`) before **Verification**. Lint, typecheck and tests against a stale image fail on imports that have nothing to do with the rebase. Skip this section if the project doesn't run in Docker.
+
 ## Verification
 
 Run these steps in order.
@@ -200,9 +210,40 @@ docker compose logs --tail=20 "${AI_SKILLS_BACKEND_SERVICE:-backend}"
 
 Check for startup errors or crash loops. If the server is down: stop and report. Skip this step if the project doesn't run a server in Docker.
 
-### 3. Tests
+### 3. Typecheck
 
-Invoke the **pytest-docker** skill to run the test suite (or a project-appropriate test skill). Do not run pytest directly.
+Skip this step when `AI_SKILLS_TYPECHECK_CMD` is empty.
+
+```bash
+eval "$AI_SKILLS_TYPECHECK_CMD"
+```
+
+Git merges text, not meaning. When main renamed a function or changed a signature your code calls, the rebase can finish without a single conflict and still leave broken code. The type checker finds those breaks across the whole codebase in seconds. If it fails: stop and report.
+
+### 4. Tests
+
+Run only the tests whose outcome the rebase can have changed. Your diff was green on the old base and main is green in CI, so the risk sits where the two meet. List what main brought in and the files both sides changed:
+
+```bash
+B="pre-rebase/$(git branch --show-current)"
+OLD_BASE=$(git merge-base origin/main "$B")
+echo "== brought in by main"; git diff --name-only "$OLD_BASE" origin/main
+echo "== changed on both sides"
+comm -12 <(git diff --name-only "$OLD_BASE" origin/main | sort) \
+         <(git diff --name-only "$OLD_BASE" "$B" | sort)
+```
+
+Then pick the scope:
+
+| What main brought in | Tests |
+|---|---|
+| Nothing, or only files no test exercises (docs, CI config, infrastructure) | None. Say so in the report. |
+| Code, but no file changed on both sides | The test files this branch added or changed |
+| Files changed on both sides, whether they conflicted or merged cleanly | The test files this branch added or changed, plus the tests for each file changed on both sides |
+
+A file both sides changed can merge cleanly and still break, so a rebase without conflicts does not shrink the list. Invoke the **pytest-docker** skill (or a project-appropriate test skill) and run the list as a Tier 1 run; it says how to find the tests for a changed file. Do not run pytest directly.
+
+Never run the full suite (Tier 2) after a rebase. CI runs it on the push that follows, and `finalize-branch` runs it once locally.
 
 If tests fail: stop and report. Do not attempt to auto-fix test failures.
 
@@ -231,7 +272,7 @@ git tag -d "pre-rebase/$(git branch --show-current)"
 
 ## Report
 
-**All pass:** Summarize what happened — number of commits rebased, conflicts resolved (and how), diff verification result, migration changes (if any), lint/format fixes (if any), test results.
+**All pass:** Summarize what happened: the number of commits rebased, conflicts resolved (and how), diff verification result, migration changes (if any), dependency changes and whether the image was rebuilt (if any), lint/format fixes (if any), typecheck result, the test scope you picked (which row of the table, and the files) and the test results.
 
 **Any failure:** Report the failure output and the recovery command (`git reset --keep pre-rebase/<branch>`). Do not force-push or make further changes.
 
@@ -250,7 +291,10 @@ git tag -d "pre-rebase/$(git branch --show-current)"
 | No recovery point | Always tag the head before starting |
 | Skipping diff verification | Silent conflict resolution errors are the #1 source of post-rebase bugs |
 | Running pytest directly | Always invoke the pytest-docker skill first |
+| Running the full suite after a rebase | Pick the scope with the table in **Verification** step 4; CI and `finalize-branch` own the full suite |
+| Skipping tests because the rebase had no conflicts | A file both sides changed can merge cleanly and still break, so it keeps its tests |
 | Auto-fixing test failures | Lint/format can be auto-fixed; test failures cannot — they need investigation |
 | Force-pushing without asking | After rebase, remind user the branch needs force-push and confirm before doing it |
+| Verifying on the old image after main changed dependencies | **Dependencies**, then rebuild |
 | Not checking Docker is running | Migration verification and tests need Docker — check during pre-flight |
 | Hardcoding migration paths or alembic commands | Use `$AI_SKILLS_MIGRATIONS_PATH` and `$AI_SKILLS_ALEMBIC_CMD`; skip the step when they are empty |

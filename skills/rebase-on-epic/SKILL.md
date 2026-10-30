@@ -19,6 +19,7 @@ Reads the same optional `AI_SKILLS_*` variables as `rebase-on-main`:
 |---|---|---|
 | `AI_SKILLS_BACKEND_SERVICE` | `backend` | Docker compose service for the checks |
 | `AI_SKILLS_LINT_CMD` / `AI_SKILLS_FORMAT_CMD` | _(empty)_ | Lint and format commands. Empty skips the step |
+| `AI_SKILLS_TYPECHECK_CMD` | _(empty)_ | Type checker command. Empty skips the step |
 | `AI_SKILLS_MIGRATIONS_PATH` / `AI_SKILLS_ALEMBIC_CMD` | _(empty)_ | Alembic migrations dir and command. Empty skips migration verification |
 
 Each Bash call is a fresh shell. **Write every hash literally into later commands**: an unset variable fails silently.
@@ -85,7 +86,17 @@ Any match means the epic changed dependencies, so the running image is stale. Te
 
 1. Lint and format, when configured: `[ -n "${AI_SKILLS_LINT_CMD:-}" ] && eval "$AI_SKILLS_LINT_CMD"`, the same for format. Commit any fixes as `style: fix lint/format issues after rebase`.
 2. Server health: `docker compose logs --tail=20 "${AI_SKILLS_BACKEND_SERVICE:-backend}"`, looking for startup errors.
-3. Tests: invoke the `pytest-docker` skill (or the project's test skill). Never auto-fix a failing test; report it.
+3. Typecheck, when configured: `[ -n "${AI_SKILLS_TYPECHECK_CMD:-}" ] && eval "$AI_SKILLS_TYPECHECK_CMD"`. A function the epic renamed reaches your code without a conflict, and the type checker finds that in seconds.
+4. Tests: run only what the rebase can have changed. List what the epic brought in, then the files both sides changed:
+   ```bash
+   git diff --name-only <FORK> "origin/<EPIC>"
+   comm -12 <(git diff --name-only <FORK> "origin/<EPIC>" | sort) <(git diff --name-only <FORK> <PRE_REBASE_REF> | sort)
+   ```
+   - Nothing came in, or only docs, CI config or infrastructure: no tests. Say so in the report.
+   - Code came in, but no file changed on both sides: the test files this branch added or changed.
+   - Files changed on both sides, conflicted or merged cleanly: those test files plus the tests for each file changed on both sides.
+
+   Run the list as a Tier 1 run of the `pytest-docker` skill (or the project's test skill). Never the full suite here: CI and `finalize-branch` own it. Never auto-fix a failing test; report it.
 
 ## Recovery
 
@@ -93,7 +104,7 @@ Mid-rebase: `git rebase --abort`. After it: `git reset --keep <PRE_REBASE_REF>`.
 
 ## Report
 
-The epic and fork point used (and whether you corrected the fork point by hand), the pre-rebase tip for recovery, commits replayed, conflicts and how they were resolved, the `range-diff` verdict, migration and dependency changes, and test results. Then remind the user the branch needs `git push --force-with-lease`, and push only when they confirm.
+The epic and fork point used (and whether you corrected the fork point by hand), the pre-rebase tip for recovery, commits replayed, conflicts and how they were resolved, the `range-diff` verdict, migration and dependency changes, the typecheck result, and the test scope you picked with its results. Then remind the user the branch needs `git push --force-with-lease`, and push only when they confirm.
 
 ## Common Mistakes
 
@@ -104,5 +115,6 @@ The epic and fork point used (and whether you corrected the fork point by hand),
 | Rebasing onto the local epic branch | Use `origin/<epic>` straight after fetching it |
 | Diffing against main | Main is irrelevant here. `range-diff` compares your commits before and after |
 | Testing on the old image after the epic changed dependencies | Step 5, then rebuild |
+| Running the full suite after the rebase | Step 6 picks the scope; CI and `finalize-branch` own the full suite |
 | Snapshots or hashes kept in shell variables or `/tmp` | Write hashes literally; `/tmp` is shared across worktrees |
 | Force-pushing without asking | Remind, confirm, then `--force-with-lease` |

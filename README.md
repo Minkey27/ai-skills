@@ -47,6 +47,7 @@ Common values to set:
 | `AI_SKILLS_TICKET_PREFIX` | e.g. `PROJ` — gates the `Closes <TICKET>` line |
 | `AI_SKILLS_BACKEND_SERVICE` | docker-compose service that runs your backend / tests |
 | `AI_SKILLS_LINT_CMD` / `AI_SKILLS_FORMAT_CMD` | Project lint / format commands |
+| `AI_SKILLS_TYPECHECK_CMD` | Project type-check command, run after a rebase |
 | `AI_SKILLS_MIGRATIONS_PATH` / `AI_SKILLS_ALEMBIC_CMD` | Alembic paths and invocation |
 
 ## Portability
@@ -61,7 +62,7 @@ Common values to set:
 | `process-mr-feedback` | Required | `AI_SKILLS_MR_TOOL=glab` (GitLab-only). `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, `AI_SKILLS_TEST_CMD`, `AI_SKILLS_COMMIT_TRAILER` are optional (each step is skipped when its variable is empty; a project test-runner skill is preferred over `AI_SKILLS_TEST_CMD` when present). |
 | `pytest-docker` | Optional | `AI_SKILLS_BACKEND_SERVICE` (default `backend`); only useful if you run pytest in docker-compose |
 | `rebase-on-epic` | Optional | Same variables as `rebase-on-main`. Finds the epic from the MR target through `glab` + `jq` when you don't name it |
-| `rebase-on-main` | Optional | `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, `AI_SKILLS_MIGRATIONS_PATH`, `AI_SKILLS_ALEMBIC_CMD` (each step is skipped when its variable is empty) |
+| `rebase-on-main` | Optional | `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, `AI_SKILLS_TYPECHECK_CMD`, `AI_SKILLS_MIGRATIONS_PATH`, `AI_SKILLS_ALEMBIC_CMD` (each step is skipped when its variable is empty) |
 | `requesting-code-review` | No | `git` |
 | `worklog` | Optional | `AI_SKILLS_TICKET_PREFIX` (labeling only); otherwise `git` + Python stdlib. Scans `~/.claude/projects`. |
 
