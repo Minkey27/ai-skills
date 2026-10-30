@@ -77,7 +77,7 @@ echo "MERGE_BASE=$(git merge-base HEAD "$BASE_BRANCH")"
 echo "PRE_SQUASH_REF=$(git rev-parse HEAD)"
 ```
 
-**On `STOP`, squash nothing.** The branch still carries the base's old commits, and the merge-base sits below them, so a squash folds the base's work into this branch's commits. Tell the user to restack first with the `rebase-on-epic` skill, then run squash again. Called from `finalize-branch`, stop the whole run.
+**On `STOP`, squash nothing.** The branch still carries the base's old commits, and the merge-base sits below them, so a squash folds the base's work into this branch's commits. Tell the user to restack first with the `rebase-on` skill, then run squash again. Called from `finalize-branch`, stop the whole run.
 
 **`PRE_SQUASH_REF` is the single most important safety mechanism.** It enables instant recovery (`git reset --hard <PRE_SQUASH_REF>`), conflict resolution via `git show <PRE_SQUASH_REF>:<file>`, and it is the tree Step 4 compares against.
 
@@ -335,7 +335,7 @@ GIT_EDITOR=true git rebase --continue
 | Force-pushing without telling user | Run standalone: remind the user the branch needs a force-push and confirm before pushing. Called from `finalize-branch`: don't push at all, its Step 3e pushes with a pinned lease |
 | Assuming base is always the default branch | Branch may be stacked on another feature branch, so always run Step 0 to detect the real base |
 | Scoring base candidates by containment | Every branch merged into the default is an ancestor of HEAD. Score by commits since divergence (Step 0) |
-| Squashing on a parent that was force-pushed after the fork | Its old commits are still in the branch. Step 1 stops; restack with `rebase-on-epic`, then squash |
+| Squashing on a parent that was force-pushed after the fork | Its old commits are still in the branch. Step 1 stops; restack with `rebase-on`, then squash |
 | Using the base branch tip instead of the merge-base | The tip can move, so Steps 2 and 3 always take `<MERGE_BASE>` |
 | Running two rebases (fixup then reword) | One pass: `pick`, `fixup` and `exec git commit --amend -F` lines in a single todo list |
 | Setting messages with a counter-based `GIT_EDITOR` | A conflict re-runs the step and desyncs the counter, leaving `# This is a combination of N commits` as a subject. Use the `exec` lines |

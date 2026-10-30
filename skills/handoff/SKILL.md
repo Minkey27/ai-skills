@@ -115,7 +115,7 @@ rather than just naming it. Typical picks:
 |---|---|
 | Any test run | the project's test-runner skill (e.g. `pytest-docker`) |
 | Work is finished, needs review + MR | `finalize-branch` |
-| Rebasing / squashing before review | `rebase-on-main`, `squash` |
+| Rebasing / squashing before review | `rebase-on`, `squash` |
 | Review feedback waiting on an MR | `process-mr-feedback` |
 
 If a project rule mandates a skill (e.g. "always invoke X before pytest"), carry

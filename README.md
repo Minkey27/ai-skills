@@ -10,8 +10,7 @@ A personal collection of [Claude Code](https://docs.claude.com/en/docs/claude-co
 - **mr-review** — `/mr-review` slash command: full review pass on the GitLab MR for the currently-checked-out branch, with per-finding verification and curated diff-note posting; findings are curated through numbered terminal prompts.
 - **process-mr-feedback** — work through the open review discussion threads on the GitLab MR for the current branch: fetch them, verify each finding against the code, curate a disposition (Fix / Push back / Dismiss / Defer), then implement, push, reply, and resolve; findings are curated through numbered terminal prompts.
 - **pytest-docker** — run pytest inside the project's docker-compose backend container.
-- **rebase-on-epic** — restack a story branch onto its epic's latest tip, replaying only the branch's own commits even after the epic was force-pushed.
-- **rebase-on-main** — rebase the current feature branch onto `main` with guided conflict resolution.
+- **rebase-on** — rebase the current branch onto `main` or the epic it is stacked on (`/rebase-on epic` finds the epic), replaying only the branch's own commits even after the epic was force-pushed, with guided conflict resolution.
 - **requesting-code-review** — dispatch one read-only reviewer subagent over a git range (plan fit and code quality, plus a correctness bug hunt); the review step behind `finalize-branch` and `mr-review`, and usable alone (e.g. on a GitHub PR). Adapted from [superpowers](https://github.com/obra/superpowers) (MIT).
 - **squash** — reorganize messy or fixup commits into clean logical commits.
 - **worklog** — reconstruct what you worked on in a time window from Claude Code session transcripts + git history; renders a `Subject | Summary | Wallclock | Active estimate` table to help log hours. Reports only; no config required (`AI_SKILLS_TICKET_PREFIX` optionally improves ticket labeling).
@@ -20,7 +19,7 @@ Each skill is a directory under [`skills/`](./skills) containing a `SKILL.md` (a
 
 ## Configuration
 
-Six skills (`finalize-branch`, `mr-review`, `process-mr-feedback`, `pytest-docker`, `rebase-on-epic`, `rebase-on-main`) accept per-project values through environment variables. The rest work out of the box.
+Five skills (`finalize-branch`, `mr-review`, `process-mr-feedback`, `pytest-docker`, `rebase-on`) accept per-project values through environment variables. The rest work out of the box.
 
 ```sh
 mkdir -p ~/.config/ai-skills
@@ -61,8 +60,7 @@ Common values to set:
 | `mr-review` | Required | `AI_SKILLS_MR_TOOL=glab` (GitLab-only); `AI_SKILLS_TICKET_PREFIX` is optional. Skill also leverages a tracker MCP (ClickUp/Jira/Linear) if one is installed, otherwise skips the ticket step. |
 | `process-mr-feedback` | Required | `AI_SKILLS_MR_TOOL=glab` (GitLab-only). `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, `AI_SKILLS_TEST_CMD`, `AI_SKILLS_COMMIT_TRAILER` are optional (each step is skipped when its variable is empty; a project test-runner skill is preferred over `AI_SKILLS_TEST_CMD` when present). |
 | `pytest-docker` | Optional | `AI_SKILLS_BACKEND_SERVICE` (default `backend`); only useful if you run pytest in docker-compose |
-| `rebase-on-epic` | Optional | Same variables as `rebase-on-main`. Finds the epic from the MR target through `glab` + `jq` when you don't name it |
-| `rebase-on-main` | Optional | `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, `AI_SKILLS_TYPECHECK_CMD`, `AI_SKILLS_MIGRATIONS_PATH`, `AI_SKILLS_ALEMBIC_CMD` (each step is skipped when its variable is empty) |
+| `rebase-on` | Optional | `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, `AI_SKILLS_TYPECHECK_CMD`, `AI_SKILLS_MIGRATIONS_PATH`, `AI_SKILLS_ALEMBIC_CMD` (each step is skipped when its variable is empty). Finds the target from the MR through `glab` + `jq` when you name none |
 | `requesting-code-review` | No | `git` |
 | `worklog` | Optional | `AI_SKILLS_TICKET_PREFIX` (labeling only); otherwise `git` + Python stdlib. Scans `~/.claude/projects`. |
 
