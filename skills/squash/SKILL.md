@@ -1,6 +1,6 @@
 ---
 name: squash
-description: Use when the current branch has messy or fixup commits that need to be reorganized into clean logical commits before merging or creating a PR, including an `epic/*` branch whose merged MRs carry review-fix commits. Pass `yolo` to take the recommended grouping without waiting for confirmation.
+description: Use when the current branch has messy or fixup commits that need to be reorganized into clean logical commits before merging or creating a PR, including an `epic/*` branch whose merged MRs carry review-fix commits. Pass `yolo` to take the recommended grouping without waiting for confirmation. For an unattended caller landing an approved MR, `--headless --mr-json <file> --commits <file> --out <dir>` plans the fold of its review fixes into its reviewed commits and changes nothing.
 ---
 
 # Squash Branch Commits
@@ -14,6 +14,8 @@ Interactive-rebase the current branch's commits on its merge-base, grouping them
 ## Arguments
 
 One optional argument: `yolo`. It removes exactly one prompt — the Step 2 grouping confirmation, which becomes the recommendation. Step 0's base-branch question and Step 4's diff-verification are unchanged.
+
+Or, for an unattended caller landing an approved MR, `--headless --mr-json <file> --commits <file> --out <dir>`. That form follows [Headless MR Mode](#headless-mr-mode---headless) and nothing else in this file runs.
 
 ## Pre-flight Checks
 
@@ -175,6 +177,51 @@ git diff --quiet <OLD_MR_END> <NEW_MR_END> && echo "!<IID> identical" || echo "!
 ```
 
 Any `CHANGED` fails Step 4: restore `<PRE_SQUASH_REF>`.
+
+## Headless MR Mode (`--headless`)
+
+```
+/squash --headless --mr-json <mr.json> --commits <commits.json> --out <dir>
+```
+
+For an unattended caller (battlestation) landing an approved MR: it folds the MR's review fixes into the commits the MR was opened with, then pushes and merges. This mode only **plans** the fold. It never rebases, commits, moves a ref, runs `glab` or fetches: the caller runs the plan, checks the tree and pushes.
+
+**Never ask anything.** No `AskUserQuestion`, no question that waits for a reply. A stop writes nothing and ends the turn with one line, `QUESTION: <why>`.
+
+**Inputs.** `--mr-json` is the raw `glab api projects/<id>/merge_requests/<iid>` object. `--commits` holds the subjects of the MR's first diff version, oldest first: `{"titles": ["feat(x): ...", "test(x): ..."]}`.
+
+**Guard.** `git rev-parse HEAD` equals `diff_refs.head_sha`, `git status --porcelain --untracked-files=no` is empty, and `git log --merges <BASE>..HEAD` is empty, where `<BASE>` is `diff_refs.base_sha`. Otherwise `QUESTION: <which failed>`. No Step 0 and no Step 1: `<BASE>` is the merge-base, `diff_refs.head_sha` is the pre-squash ref.
+
+**Map.** Step 2E with the whole range as one MR: every commit in `<BASE>..HEAD` is this MR's.
+
+- **Logical commit:** its subject is in `--commits`.
+- **Fix:** every other commit. It folds into the latest logical commit before it that touches one of its files, and Step 2E's rule for a fix that stays where it is applies as written.
+- **Kept fix:** a fix that stays where it is, one that touches no logical commit's files, and one whose subject starts with `feat` (scope added after the first version, which its reviewer read as a commit of its own). It stays a `pick`, unfolded, and the merge goes ahead.
+
+Step 2E's reword rule applies as written. Stop with `QUESTION:` when a `--commits` subject matches no commit or several.
+
+**Output**, in `--out`, nothing written anywhere else:
+
+1. **`squash-msg-<target sha>.txt`**, one per reworded target: its whole new message.
+2. **`squash-todo.txt`**: Step 3E's linear todo, every commit in `<BASE>..HEAD` in branch order, with full SHAs. After each reworded target's last `fixup`, add `exec git commit --amend --quiet --no-verify -F <absolute path of its message file>`. That amend changes only the message, and a project's pre-commit hook (one that needs its containers running, say) would stop an unattended rebase for nothing.
+3. **`squash.json`**, written **last**:
+
+   ```json
+   {
+     "spec": 1,
+     "base": "<BASE>",
+     "head": "<diff_refs.head_sha>",
+     "folds": [{"sha": "<fix>", "subject": "fix: ...", "into": "<target>"}],
+     "kept": [{"sha": "<fix>", "subject": "fix: ...", "reason": "crosses 5b146139f, which touches the same file"}],
+     "reworded": ["<target>"]
+   }
+   ```
+
+   No fix to fold (none at all, or every one kept) → `"folds": []` and no todo file. The caller then merges without rewriting anything.
+
+The caller runs `GIT_SEQUENCE_EDITOR="cp <out>/squash-todo.txt" GIT_EDITOR=true git rebase -i <BASE>`, then Step 4's `git diff --quiet <head> HEAD`. On a conflict or any difference it aborts the rebase, puts the branch back on `head` and merges nothing.
+
+**End the turn** with `MR !<iid>: <n> folded, <m> kept → <out>`.
 
 ## Step 2: Analyze Commits
 
