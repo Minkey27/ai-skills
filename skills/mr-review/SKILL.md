@@ -392,7 +392,7 @@ The per-finding blocks in the write-up file (Step 7a). A block holds the reviewe
 
 ## Note body
 
-The text posted to GitLab, and the only description of a finding: the write-up quotes it, `findings.json` carries it as `note_body`, battlestation shows and posts it. Written for the author reading in the diff view.
+The text posted to GitLab, and the only description of a finding: the write-up quotes it, `findings.json` carries it as `note_body`, reviewstation shows and posts it. Written for the author reading in the diff view.
 
 ```markdown
 **<label>:** <the headline as one full sentence>
@@ -444,38 +444,42 @@ For an unattended caller: a local daemon running `claude -p --permission-mode do
 **Output** — exactly two files in `--out`, nothing written anywhere else:
 
 1. **`review.md`** — the 7a write-up: meta block, counts, `excluded, and why` lines, overview table, finding blocks.
-2. **`findings.json`** — written **last**, after `review.md`, and only once complete: the caller reads it when the turn ends and sends back once what it refuses. Every key present; `null` where one doesn't apply. The caller's contract: `internal/app/prompts/findings-format.md` in battlestation.
+2. **`findings.json`** — written **last**, after `review.md`, and only once complete: the caller reads it when the turn ends and sends back once what it refuses. Every key present; `null` where one doesn't apply. The caller's contract: `internal/app/prompts/findings-format.md` in reviewstation.
 
 ```json
 {
-  "spec": 1,
+  "spec": 2,
   "summary": "Two or three sentences: what the MR gets right and what blocks it.",
   "findings": [{
     "severity": "critical|high|medium|low|nit",
-    "bucket": "recommended|optional|excluded|ask",
-    "exclude_reason": null,
     "title": "short headline",
     "file": "path/from/repo/root.py",
     "side": "new",
     "line_start": 62,
     "line_end": 62,
-    "verification": {"issue_real": "yes|no|partial", "fix_sound": "yes|no|risky", "flag": "verified as claimed", "notes": "..."},
-    "writeup": "Take: …",
-    "note_body": "…"
+    "note_body": "…",
+    "ai": {
+      "real": "yes|no|partial",
+      "sound": "yes|no|risky",
+      "suggest": "blocking|non-blocking|follow-up|skip|null",
+      "why": "the My read reason",
+      "evidence": "verified as claimed. …"
+    }
   }]
 }
 ```
 
-- `spec` — always `1`.
-- `summary` — two or three sentences: what the MR gets right and what blocks it. Shown on battlestation's Overview, never posted.
-- `findings` — every `F` finding, Excluded included, in id order and without ids: battlestation numbers them `F1`, `F2`, … in that order (after the `--prior` ones with `--since`), so `review.md`'s ids match. `title` is the heading's headline; `exclude_reason` is the `excluded, and why` reason, `null` unless Excluded.
-- `bucket` — the 7b bucket, lowercased, except `ask` for a finding that isn't Excluded and whose Step 6 verdict is `issue_real: partial` or `fix_sound: risky`: those are the reviewer's call, so battlestation leaves them undecided. `review.md` keeps its 7b tag and `**My read.**`.
+- `spec` — always `2`.
+- `summary` — two or three sentences: what the MR gets right and what blocks it. Shown on reviewstation's Overview, never posted.
+- `findings` — every `F` finding, Excluded included, in id order and without ids: reviewstation numbers them `F1`, `F2`, … in that order (after the `--prior` ones with `--since`), so `review.md`'s ids match. `title` is the heading's headline.
 - `line_start` / `line_end` — the verified lines (`corrected_lines` when Step 6 gave them). File-level → both `null`.
-- `side` — `new` when the lines are added or unchanged (numbers of the new file), `old` when they are removed (numbers of the old file). Battlestation builds the GitLab position from `file`, `side` and the lines; lines outside the diff post as a general comment.
-- `verification` — Step 6's bare `issue_real` / `fix_sound` verdicts, the metadata line's delta flag, and the reasons plus any interaction in `notes`.
-- `writeup` — the `**My read.**` text without its label: `Take: …` or `Skip: …`.
-- `note_body` — the [note body](#note-body), exactly as the write-up quotes it.
-- Excluded findings have no block and are never posted: `writeup` and `note_body` are `null`.
+- `side` — `new` when the lines are added or unchanged (numbers of the new file), `old` when they are removed (numbers of the old file). Reviewstation builds the GitLab position from `file`, `side` and the lines; lines outside the diff post as a general comment.
+- `note_body` — the [note body](#note-body), exactly as the write-up quotes it. Excluded findings have no block and are never posted: `null`.
+- `ai` — what you make of the finding. Reviewstation shows it apart from the note, as the AI's, and never posts it.
+  - `real` and `sound` — Step 6's bare `issue_real` and `fix_sound` verdicts.
+  - `suggest` — your pick, in the reviewer's words. The reviewer posts a note with a weight, and the weight sets its label's decoration. A Recommended finding is `blocking` or `non-blocking`, as its label says (a `nitpick` is non-blocking), or `follow-up` when its fix belongs in another MR (outside the diff's hunks, or wider than this branch): the note then asks the author for a ticket. Optional and Excluded are `skip`. `null` for a finding that isn't Excluded and whose Step 6 verdict is `issue_real: partial` or `fix_sound: risky`: those are the reviewer's call, so reviewstation leaves them undecided. `review.md` keeps its 7b tag and `**My read.**`.
+  - `why` — the `**My read.**` text without its label and without `Take:` or `Skip:`; for an Excluded finding, its `excluded, and why` reason.
+  - `evidence` — the metadata line's delta flag, then Step 6's reasons and any interaction it found.
 
 Write both files with the Write tool, not a shell heredoc — the bodies are full of quotes and backticks. In `findings.json`, JSON-escape the markdown strings (`\n`, `\"`, `\\`). Then check it parses:
 
@@ -503,7 +507,7 @@ The caller already reviewed this MR up to `<sha>`; the author has since added co
 `--prior` holds every finding the caller has, lines as of an earlier head (they may have shifted):
 
 ```json
-{"findings": [{"id": "F3", "title": "…", "file": "a.go", "line_start": 12, "line_end": 14, "bucket": "recommended"}]}
+{"findings": [{"id": "F3", "title": "…", "file": "a.go", "line_start": 12, "line_end": 14}]}
 ```
 
 ## Failure modes
