@@ -7,6 +7,7 @@ prints a JSON report to stdout. See SKILL.md for how the report is rendered.
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import os
 import re
@@ -236,6 +237,61 @@ def parse_session(lines):
         "events": inherit_session_branch(events),
         "prompts": prompts,
     }
+
+
+def subagent_marks(session_path, ticket_prefix):
+    """(timestamp, ticket) for every event of a session's subagents, by time.
+
+    Subagents live in `<session-id>/subagents/agent-*.jsonl` beside the session
+    file. The ticket comes from the agent's `.meta.json` description ("Implement
+    BPZ-1682 shell"), because an agent's own gitBranch is noise in a shared epic
+    worktree. An agent that names no ticket marks its moments with None.
+    """
+    if ticket_prefix:
+        pattern = re.compile(rf"\b{re.escape(ticket_prefix)}-\d+", re.I)
+    else:
+        pattern = re.compile(r"\b[A-Z][A-Z0-9]*-\d+")
+    marks = []
+    for meta in Path(session_path).with_suffix("").glob("subagents/*.meta.json"):
+        try:
+            description = json.loads(meta.read_text(errors="ignore")).get("description") or ""
+        except json.JSONDecodeError:
+            description = ""
+        match = pattern.search(description)
+        ticket = match.group(0).upper() if match else None
+        transcript = meta.with_name(meta.name.replace(".meta.json", ".jsonl"))
+        if transcript.exists():
+            lines = transcript.read_text(errors="ignore").splitlines()
+            marks.extend((event["ts"], ticket) for event in parse_session(lines)["events"])
+    return sorted(marks, key=lambda mark: mark[0])
+
+
+def attribute_to_subagents(events, marks, known_branches, cap_minutes=IDLE_CAP_MINUTES):
+    """Move an orchestrator's time onto the tickets its subagents work on.
+
+    Each event goes to the ticket of the latest subagent event at or before it,
+    within the idle cap: the agent whose report the orchestrator is handling.
+    Agent time itself is never counted, it is machine time. The ticket resolves
+    to its known branch, so the row keeps its slug and its ownership. No agent in
+    reach, an agent naming no ticket, or a ticket with no branch yet leaves the
+    event where it was.
+    """
+    tickets = {ticket for _, ticket in marks if ticket}
+    branch_for = {
+        ticket: next((b for b in sorted(known_branches)
+                      if re.match(rf"{re.escape(ticket)}(-|$)", b, re.I)), None)
+        for ticket in tickets
+    }
+    times = [ts for ts, _ in marks]
+    cap = timedelta(minutes=cap_minutes)
+    for event in events:
+        index = bisect.bisect_right(times, event["ts"]) - 1
+        if index < 0 or event["ts"] - times[index] > cap:
+            continue
+        branch = branch_for.get(marks[index][1])
+        if branch:
+            event["branch"] = branch
+    return events
 
 
 def build_report(sessions, *, window, repo_root, live_worktrees,
@@ -573,8 +629,16 @@ def main(argv=None):
     worktree_parents = {str(Path(p).parent) for p in live}
     worktree_parents.add(str(Path(repo_root) / ".claude" / "worktrees"))
 
-    sessions = [parse_session(p.read_text(errors="ignore").splitlines())
-                for p in discover_session_files(args.projects_root)]
+    sessions = []
+    for path in discover_session_files(args.projects_root):
+        session = parse_session(path.read_text(errors="ignore").splitlines())
+        # Only sessions active in the window: reading every agent transcript on
+        # disk costs seconds and moves no time inside it.
+        if any(window[0] <= event["ts"] <= window[1] for event in session["events"]):
+            marks = subagent_marks(path, ticket_prefix)
+            if marks:
+                attribute_to_subagents(session["events"], marks, known)
+        sessions.append(session)
 
     author = (_git(repo_root, ["config", "user.email"]) or
               _git(repo_root, ["config", "user.name"]) or [""])[0].strip()

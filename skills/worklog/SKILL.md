@@ -31,6 +31,10 @@ dropped (`85.0` → `1h 25m`, `0.2` → `0m`). Each row gets one **summary phras
 `commits` when present (the outcome), else from `titles` and `prompt_samples`
 (the intent). Merge two rows only when they are plainly one task, and say so.
 
+A session that dispatches subagents (run-epic, reviews) has its own time moved
+onto the ticket each agent's description names, so an epic orchestrator splits
+over its tickets. The agents' own time is never counted.
+
 ### Time table
 
 ```

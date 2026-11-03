@@ -290,6 +290,35 @@ def test_discover_session_files(tmp_path):
     assert sorted(p.name for p in found) == ["a.jsonl", "b.jsonl"]
 
 
+# --- subagent attribution --------------------------------------------------------
+def test_subagent_marks_take_ticket_from_meta_description(tmp_path):
+    session = tmp_path / "s1.jsonl"
+    session.write_text("")
+    agents = tmp_path / "s1" / "subagents"
+    agents.mkdir(parents=True)
+    for name, description, minute in [("agent-a", "Implement BPZ-1682 shell", 0),
+                                      ("agent-b", "Write design notes", 5)]:
+        (agents / f"{name}.meta.json").write_text(_json.dumps({"description": description}))
+        (agents / f"{name}.jsonl").write_text(_json.dumps(
+            {"timestamp": _dt(minute).isoformat(), "gitBranch": "BPZ-9-noise"}))
+    assert worklog.subagent_marks(session, "BPZ") == [(_dt(0), "BPZ-1682"), (_dt(5), None)]
+
+
+def test_attribute_to_subagents_moves_orchestrator_time_to_latest_agent_ticket():
+    known = {"BPZ-1682-project-page-shell", "BPZ-1685-verkoop", "epic/nav"}
+    marks = [(_dt(0), "BPZ-1682"), (_dt(10), None), (_dt(20), "BPZ-1999"), (_dt(30), "BPZ-1685")]
+    events = [{"ts": _dt(m), "branch": "epic/nav"} for m in (-5, 2, 12, 22, 32, 60)]
+    out = worklog.attribute_to_subagents(events, marks, known)
+    assert [e["branch"] for e in out] == [
+        "epic/nav",                     # before any agent
+        "BPZ-1682-project-page-shell",  # handling the 1682 agent
+        "epic/nav",                     # latest agent names no ticket
+        "epic/nav",                     # BPZ-1999 has no branch yet
+        "BPZ-1685-verkoop",
+        "epic/nav",                     # 30m after the last agent, past the idle cap
+    ]
+
+
 # --- session branch inheritance ------------------------------------------------
 def test_inherit_session_branch_fills_generic_events():
     events = [{"branch": "bpz-756-x"}, {"branch": None}, {"branch": "HEAD"},
