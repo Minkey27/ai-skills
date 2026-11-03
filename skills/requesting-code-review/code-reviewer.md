@@ -135,7 +135,7 @@ Subagent (general-purpose):
     [Bugs, security issues, data loss risks, broken functionality]
 
     #### Important (Should Fix)
-    [Architecture problems, missing features, poor error handling, test gaps]
+    [Architecture problems, missing features, poor error handling, test gaps, a comment or docstring that contradicts the code it sits on]
 
     #### Minor (Nice to Have)
     [Code style, optimization opportunities, documentation polish]

@@ -246,7 +246,7 @@ The file stands alone. In order:
    |----|----------|-----|--------|-------|------------|--------|
    | [F1](#f1rec---every-dropdown-click-rewrites-user_roles) | every dropdown click rewrites user_roles | medium | service.py:62 | ✓ yes | ⚠ risky | Recommended |
    | [F2](#f2rec---route-test-asserts-nothing) | route test asserts nothing | medium | test_routes.py:107 | ✓ yes | ✓ yes | Recommended |
-   | [F3](#f3skip---stale-docstring) | stale docstring | low | (file-level) | ✓ yes | ✓ yes | Optional |
+   | [F3](#f3skip---loop-could-be-a-comprehension) | loop could be a comprehension | nit | utils.py:40 | ✓ yes | ✓ yes | Optional |
    ```
 
    Anchors assume GitHub-style slugs (lowercase, brackets dropped, the ` - ` separator collapsing to three hyphens, spaces → hyphens). If your Markdown viewer slugifies differently the links just don't jump; they are navigation only.
@@ -262,6 +262,8 @@ The file stands alone. In order:
 | **Excluded** | `issue_real == no` (verified false positive), OR the sub-agent recommends declining | Not selectable. Listed in the `excluded, and why` lines. |
 
 > **Precedence:** `medium`+ with `fix_sound == risky` → **Optional**. A real issue with a caveated fix is not posted on the skill's recommendation; the user opts in with the caveat visible in `Fix sound?`.
+
+> **A comment or docstring that contradicts the code → Recommended,** at `low` or above, with a `Take:` read. The next agent to read it trusts it over the code, so it is a wrong instruction, not polish. Wording, a missing comment, or one that restates the code stays `nit` and Optional.
 
 > **`partial` stays Recommended.** It usually means the bug is real but the reviewer's trigger diagnosis was wrong; the corrected diagnosis is what gets posted. Down-rating it would waste the verification.
 
@@ -407,7 +409,7 @@ Labels follow [Conventional Comments](https://conventionalcomments.org/), set by
 |---|---|
 | Something is wrong now, `critical` / `high` / `medium` | `issue (blocking)` |
 | Something is wrong now, `low` | `issue (non-blocking)` |
-| Works but could be better (missing test, stale doc) | `suggestion (blocking)` at `medium` and up, `suggestion (non-blocking)` at `low` |
+| Works but could be better (missing test, doc wording) | `suggestion (blocking)` at `medium` and up, `suggestion (non-blocking)` at `low` |
 | `nit` | `nitpick` |
 | A question only the author can answer | `question (non-blocking)` |
 
