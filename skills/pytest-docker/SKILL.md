@@ -100,7 +100,7 @@ a clean tree records the tree it tested in the worktree's git dir, so a later
 session sees that the suite already passed on this code. What is forbidden is
 starting a run on your own initiative: CI runs the suite on every push, and the
 local run exists to catch a cross-cutting break before the MR round-trip.
-Failures → fix, re-run once.
+Failures → fix, then size the fix (Tier 2 failures, step 4).
 
 Pass the Bash tool `timeout: 600000` — the suite takes 5–8 minutes and the
 default 2-minute timeout backgrounds it. **One run at a time**: the test DB is
@@ -187,7 +187,16 @@ Every failure on a feature branch is yours. Tier 1 and Tier 2 both end at
 1. Search the output for every name, `Read` the tracebacks.
 2. Report all of them **before** fixing anything.
 3. Fix; re-run each fixed test alone with `-vs`.
-4. Re-run the suite once; `exit: 0`.
+4. Size the fix, not the branch: every test the fix left alone already
+   passed on this code. A fix that touches only test files, and none of the
+   test infrastructure listed under **Size it first**, is done once step 3
+   passes; commit it and record the tree, so a later session skips the run too:
+   ```bash
+   git status --porcelain | grep -q . || git rev-parse 'HEAD^{tree}' > "$(git rev-parse --git-dir)/full-suite-green"
+   ```
+   Any other fix goes through **Size it first** with the fix's own diff as the
+   list: a contained runtime change gets collect-only plus Tier 1, and only the
+   Tier 2 rows earn a second full run.
 
 ## Hard rules
 
