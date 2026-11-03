@@ -412,12 +412,13 @@ For an unattended caller: a local daemon (battlestation) running `claude -p --pe
 {"me": "yimingyung", "threads": [{
   "discussion_id": "6a9c…",
   "path": "src/service.py", "line": 62,
-  "notes": [{"author": "ann", "body": "This rewrites user_roles on every request."},
+  "weight": "blocking",
+  "notes": [{"author": "ann", "body": "**issue (blocking):** This rewrites user_roles on every request."},
             {"author": "yimingyung", "body": "Only when the dropdown changes?"}]
 }]}
 ```
 
-`path` and `line` are `null` for a general comment. The first note opened the thread; more notes are prior discussion (`has_prior_replies`).
+`path` and `line` are `null` for a general comment. The first note opened the thread; more notes are prior discussion (`has_prior_replies`). `weight` is what the first note's [Conventional Comments](https://conventionalcomments.org/) label asks for, as the caller reads it: `blocking`, `non-blocking` (a `(non-blocking)` decoration, a `nitpick`, a `question`), `follow-up` (a `(follow-up)` decoration: track it, don't do it now), or `null` when the note has no label.
 
 | Stage | Headless |
 |---|---|
@@ -426,7 +427,19 @@ For an unattended caller: a local daemon (battlestation) running `claude -p --pe
 | 3 | Build the 3a write-up as usual, written to `<out>/feedback.md`. No `$GITDIR` file, no prompts: the caller curates from `answers.json`. |
 | 4–5 | Don't run. Nothing is edited, committed, pushed or posted. |
 
-**A thread `me` opened** is the author's own note to self, not a reviewer's request: `valid` (still to do) → **Fix**, already done → **Dismiss**, unclear → **Defer** with the question. Never **Push back**: the author doesn't argue with themselves.
+**The caller's answers.** The caller curates in five words, and `answers.json` speaks them. Stage 2's dispositions map onto them; `ticket` is the caller's own:
+
+| Answer | Stage 2 | The caller posts | Resolves by default |
+|---|---|---|---|
+| `fix` | Fix | `Fixed in <sha>: <reply>` | yes |
+| `ticket` | Defer, tracked as a follow-up | `Ticket <link>: <reply>` | yes |
+| `explain` | Dismiss: already handled, or doesn't apply | the reply | yes |
+| `disagree` | Push back: the reviewer is wrong | the reply | no |
+| `ask` | Defer, with a question | the reply | no |
+
+**The weight steers the pick.** A `valid` thread whose `weight` is `follow-up` → `ticket`: the reviewer asked for it to be tracked, not done now. A question (the label is `question`, or the note only asks) is answered: `explain` when the code answers it, `fix` when the answer is that it's a defect, `ask` when you need more to answer.
+
+**A thread `me` opened** is the author's own note to self, not a reviewer's request: `valid` (still to do) → `fix`, already done → `explain`, unclear → `ask` with the question. Never `disagree`: the author doesn't argue with themselves.
 
 **Output** — exactly two files in `--out`, nothing written anywhere else:
 
@@ -435,29 +448,36 @@ For an unattended caller: a local daemon (battlestation) running `claude -p --pe
 
 ```json
 {
-  "spec": 1,
+  "spec": 2,
   "answers": [{
     "discussion_id": "6a9c…",
     "cluster": "A",
-    "verdict": "valid|invalid|needs-clarification",
-    "disposition": "fix|push_back|dismiss|defer",
     "title": "dropdown click rewrites user_roles on every request",
-    "problem": "…",
-    "why": "…",
     "fix": "…",
-    "evidence": null,
-    "reply": "…"
+    "reply": "…",
+    "ai": {
+      "real": "yes|no|null",
+      "sound": "yes|no|risky|null",
+      "suggest": "fix|ticket|explain|disagree|ask",
+      "why": "**Problem.** …\n\n**Why it bites.** …",
+      "evidence": null
+    }
   }]
 }
 ```
 
 - `cluster` — the 1c cluster's letter when the thread shares an anchor or a fix with another, else `null`. Threads in one cluster share `fix`; each keeps its own `reply`.
-- `disposition` — Stage 2's default (the table there), lowercased with `_`.
-- `title` — the block heading's headline. `problem`, `why` and `fix` — the block's **Problem.**, **Why it bites.** and **Fix.** text, without their labels. For Push back and Defer, `fix` carries the reasoning or the question, as the block does.
-- `evidence` — what was read that shows the comment is wrong; required when `verdict` is `invalid`, else `null`.
-- `reply` — the note the caller posts on the thread, as written (reply tone applies). For **Fix**, one line saying what changed, without the commit: the caller posts `Fixed in <sha>: <reply>` once the fix is pushed, or `Updated the description: <reply>` when the fix is in the MR description. Dismiss: the reasoning. Push back: the technical reasoning. Defer: the question, or that it is tracked as a follow-up.
+- `title` — the block heading's headline.
+- `fix` — the block's **Fix.** text, without its label: the change to make, which the caller hands back in `--apply`. For `disagree` and `ask`, the reasoning or the question, as the block has it.
+- `reply` — the note the caller posts on the thread, as written (reply tone applies), after its prefix in the table above. For `fix`, one line saying what changed, without the commit; the caller posts `Updated the description: <reply>` instead when the fix is in the MR description. `ticket`: what the follow-up will cover. `explain`: why it's handled or doesn't apply. `disagree`: the technical reasoning. `ask`: the question.
+- `ai` — what you make of the thread. The caller shows it apart from the reviewer's words and never posts it.
+  - `real` — Stage 2's verdict: `valid` → `yes`, `invalid` → `no`, `needs-clarification` → `null`.
+  - `sound` — when the reviewer proposed a fix: whether it works as proposed (Stage 2 task 3), `yes`, `no` or `risky`; else `null`.
+  - `suggest` — your pick of the five answers above.
+  - `why` — the block's **Problem.** and **Why it bites.** paragraphs, with their bold labels, as markdown.
+  - `evidence` — what was read that shows the comment is wrong; required when `real` is `no`, else `null`.
 
-**End the turn** with one line of counts per disposition — `MR !<iid>: 2 fix, 1 push back, 1 defer → <out>`.
+**End the turn** with one line of counts per answer — `MR !<iid>: 2 fix, 1 disagree, 1 ask → <out>`.
 
 ### Implement the accepted fixes (`--apply`)
 
