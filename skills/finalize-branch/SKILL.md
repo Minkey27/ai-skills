@@ -209,7 +209,22 @@ BODY_FILE="${MR_BODY_FILE:-$(git rev-parse --git-path mr-body.md)}"
 
 Constant expressions like `$STATE` — re-derive per block. Body starts with `Closes $TICKET` when set. Announce title and body in your response before creating. If the environment mandates a scratchpad, point `MR_TITLE_FILE` / `MR_BODY_FILE` inside it. Follow `.gitlab/merge_request_templates/` or `.github/pull_request_template.md` when present.
 
-**3d. Deletion pass.** Check every bullet against the diff: **if a reviewer would already know it from the file list or the code, cut it.**
+**Try it.** When the change shows on a page of the running app, the body ends with a section that takes the reviewer there. Reviewstation reads it and links each path to the MR's local environment; on GitLab the paths show as code, to open on the reviewer's own host.
+
+```markdown
+## Try it
+
+- `/orders/42/edit` — edit form with the new discount field
+- `/reports/sales?period=q3` — sales report, new Q3 filter
+```
+
+- The heading is exactly `## Try it`, the last section of the body, and each line is `` - `<path>` — <label> ``. Reviewstation parses this shape: a reworded heading, or a markdown link in place of the code span, is not found.
+- A path starts with `/`, with no host and no spaces; a query string is fine.
+- One to five paths, each opening as-is on a freshly seeded environment: a list page, or an id the seed data has. Never a placeholder like `<id>`.
+- Find them in the diff: the routes, views and templates it changes, and the page where the change shows.
+- Nothing to open (a backend-only change, a CLI, a library) → no section.
+
+**3d. Deletion pass.** Check every bullet against the diff: **if a reviewer would already know it from the file list or the code, cut it.** The `## Try it` section stays: the file list doesn't say where the change shows.
 
 **3e. Push, then create or update.**
 
@@ -363,7 +378,7 @@ Each rule in the body carries its reason there. These are the ones it does not s
 - Ask every gate question in plain text with numbered options, never `AskUserQuestion`: its countdown assumes a default, and "may I force-push" must not be answerable by a timer.
 - Mark the MR draft with `--draft`, never with a `Draft:` or `WIP:` title prefix. Pass `--draft` and `--assignee @me` on every invocation; add `--reviewer` only when `$AI_SKILLS_REVIEWERS` is non-empty.
 - Leave no literal `<TICKET>` placeholder in the description.
-- Leave out a test-plan or QA-steps section; the reviewer reads the diff and CI.
+- Leave out a test-plan or QA-steps section; the reviewer reads the diff and CI. `## Try it` lists pages to open, never steps.
 - Run lint and format before any commit (project-specific), and commit each step's fixes before the next.
 
 ## Integration
