@@ -167,7 +167,7 @@ def test_parse_session_extracts_title_events_prompts():
     assert s["session_id"] == "s1"
     assert s["ai_title"] == "Fix overlay"
     assert s["cwd"] == "/repo/wt"
-    assert len(s["events"]) == 3
+    assert len(s["events"]) == 2  # the attachment record is not activity
     assert s["events"][0]["branch"] == "bpz-756-x"
     assert isinstance(s["events"][0]["ts"], datetime)
     assert s["prompts"] == ["Fix the download please"]
@@ -235,19 +235,6 @@ def test_build_report_filters_outside_window():
     assert rows["BPZ-756 x"]["session_count"] == 1
 
 
-def test_build_report_marks_started_vs_continued_ticket():
-    sessions = [
-        # touched long before the window, and again today -> continued, not started
-        _sess("s1", "T", "/repo", [(-1000, "bpz-700-old"), (0, "bpz-700-old")]),
-        # first ever touch falls inside the window -> started today
-        _sess("s2", "T", "/repo", [(5, "bpz-701-new")]),
-    ]
-    report = worklog.build_report(sessions, **_scope())
-    rows = {r["subject"]: r for r in report["subjects"]}
-    assert rows["BPZ-700 old"]["started_in_window"] is False
-    assert rows["BPZ-701 new"]["started_in_window"] is True
-
-
 def test_build_report_routes_unowned_branch_to_reviews():
     # bpz-756-x is a known branch, but the user authored nothing on it -> review
     sessions = [_sess("s1", "T", "/repo/wt-756", [(0, "bpz-756-x"), (5, "bpz-756-x")])]
@@ -300,7 +287,7 @@ def test_subagent_marks_take_ticket_from_meta_description(tmp_path):
                                       ("agent-b", "Write design notes", 5)]:
         (agents / f"{name}.meta.json").write_text(_json.dumps({"description": description}))
         (agents / f"{name}.jsonl").write_text(_json.dumps(
-            {"timestamp": _dt(minute).isoformat(), "gitBranch": "BPZ-9-noise"}))
+            {"type": "assistant", "timestamp": _dt(minute).isoformat(), "gitBranch": "BPZ-9-noise"}))
     assert worklog.subagent_marks(session, "BPZ") == [(_dt(0), "BPZ-1682"), (_dt(5), None)]
 
 
@@ -342,6 +329,12 @@ def test_in_scope_subdirectory_of_repo_root_and_worktree():
     assert worklog.in_scope("/repo/backend/src", "main", "/repo", set(), set())
     assert worklog.in_scope("/repo/wt-756/backend", None, "/repo", {"/repo/wt-756"}, set())
     assert not worklog.in_scope("/repository", "main", "/repo", set(), set())
+
+
+def test_parse_session_resolves_review_worktree_to_its_branch():
+    line = _json.dumps({"type": "user", "timestamp": "2026-06-16T09:00:00.000Z", "sessionId": "s1",
+                        "gitBranch": "review/bpz-756-x", "cwd": "/wts/review/bpz-756-x"})
+    assert worklog.parse_session([line])["events"][0]["branch"] == "bpz-756-x"
 
 
 def test_parse_session_drops_command_and_handback_noise():
@@ -452,3 +445,22 @@ def test_enrich_commits_skips_generic_branches(monkeypatch):
     assert report["subjects"][0]["merged_commits"] == []
     assert report["subjects"][1]["merged_commits"] == ["Merge branch 'bpz-756-x' into 'main'"]
     assert "feat: thing" in report["subjects"][1]["commits"]
+
+
+def test_enrich_commits_links_ticket_rows_by_subject(monkeypatch):
+    log = [
+        "feat: BPZ-1688 show the result\x00",                 # no longer the branch tip
+        "feat: BPZ-1682 split the page\x00BPZ-1684-config",   # tip shared by a stacked branch
+        "Merge branch 'BPZ-1688-fin' into 'epic/nav'\x00",
+    ]
+    monkeypatch.setattr(worklog, "_git", lambda repo_root, args: log)
+    report = {"subjects": [
+        {"ticket": "BPZ-1688", "branches": ["BPZ-1688-fin"], "commits": [], "merged_commits": []},
+        {"ticket": "BPZ-1684", "branches": ["BPZ-1684-config"], "commits": [], "merged_commits": []},
+    ]}
+    worklog._enrich_commits(report, "/repo", _dt(0), _dt(59), "me@example.com")
+    fin, config = report["subjects"]
+    assert fin["commits"] == ["Merge branch 'BPZ-1688-fin' into 'epic/nav'",
+                              "feat: BPZ-1688 show the result"]
+    assert fin["merged_commits"] == ["Merge branch 'BPZ-1688-fin' into 'epic/nav'"]
+    assert config["commits"] == []

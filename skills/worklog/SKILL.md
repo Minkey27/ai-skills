@@ -26,50 +26,39 @@ Run it from the repo root. `WINDOW`: omit for today, `YYYY-MM-DD` for one day,
 
 ## Render
 
+Four blocks, in this order: The day, Hours, Time table, Flags.
+
 Rows are `subjects`, already sorted by active time. Minutes print as `Xh Ym`, fraction
 dropped (`85.0` → `1h 25m`, `0.2` → `0m`). Each row gets one **summary phrase**: from
 `commits` when present (the outcome), else from `titles` and `prompt_samples`
 (the intent). Merge two rows only when they are plainly one task, and say so.
 
+Each row also gets a **status**: `merged into <target>` when `merged_commits` is
+non-empty, the target read from `Merge branch 'X' into '<target>'`; `committed`
+when only `commits` is; `research` otherwise. Local commits alone are not a
+merge. Rows of `meta.reviews` have status `review`.
+
 A session that dispatches subagents (run-epic, reviews) has its own time moved
 onto the ticket each agent's description names, so an epic orchestrator splits
 over its tickets. The agents' own time is never counted.
 
-### Time table
+### The day
 
-```
-| Subject | Summary | Wallclock | Active estimate |
-|---|---|---|---|
-| **Ticketed** | | | |
-| BPZ-1405 as_of-callers | Callers that omit as_of on temporal repos | 5h 57m | 4h 10m |
-| *Subtotal* | | 5h 57m | 4h 10m |
-| **Non-ticketed** | | | |
-| fix temporal hard deletes | Temporal delete audit | 1h 8m | 1h 8m |
-| Unlabeled sessions (2) | | 3m | 3m |
-| *Subtotal* | | 1h 11m | 1h 11m |
-| **Total** | | 7h 8m | 5h 21m |
-```
+Three to six bullets on what the day held, one per piece of work, grouped by
+theme rather than by row. Each bullet is a single line that stands on its own.
+Name tickets where they help; leave minutes to the tables. Under the list, two
+bold lines, not bullets:
 
-Ticketed = rows with a `ticket`. All `untitled: true` rows collapse into the one
-`Unlabeled sessions (N)` row, from `meta.subtotals.untitled`. Subtotals come
-from `meta.subtotals`, the total from `meta.totals`. Under the table:
-`At the keyboard: Xh Ym` from `meta.totals.union_active_min`; when it is below
-the total, add "(the total sums parallel worktree sessions)".
+- **Most impact:** one row and why, in one line. Rank by status: merged into
+  `main`, then merged into another branch, then `committed` or `review`, then
+  `research`. Within a tier, ticket work (a `ticket` row, or an epic branch of
+  tickets) beats tooling and chores; `active_min` breaks ties.
+- **Most time:** the row with the highest `active_min`, with its time. Leave the
+  line out when it is the Most impact row.
 
-### Four lists
+Untitled rows never qualify for either line.
 
-Four headings, `## Picked up`, `## Worked on`, `## Merged`, `## Reviews`, always
-all four, in this order. One bullet shape:
-`- **BPZ-1234** slug: summary (Xh Ym)`; a non-ticket row puts its subject where
-the ticket goes. Skip `untitled` and `0m` rows. Empty list → `- none`.
-
-- Picked up: `started_in_window` true.
-- Worked on: `started_in_window` false and `merged_commits` empty.
-- Merged: `merged_commits` non-empty; name the merged branch. Local `commits`
-  alone are not a merge.
-- Reviews: rows of `meta.reviews`. Never in the other lists or totals.
-
-### Suggested hours
+### Hours
 
 One row per `meta.suggested_hours` entry, in the script's order:
 
@@ -87,6 +76,30 @@ comment built from its `subjects`. Entries with `hours` 0 leave the table and
 go beneath it as `under 15m: …`. `meta.workdays` > 1 → drop the `Time` column.
 `meta.hours_budget` is 0 → say it is a weekend and point at `--hours`. Leave is
 never derivable; do not invent it.
+
+### Time table
+
+```
+| Subject | Summary | Status | Wallclock | Active estimate |
+|---|---|---|---|---|
+| **Ticketed** | | | | |
+| BPZ-1405 as_of-callers | Callers that omit as_of on temporal repos | committed | 5h 57m | 4h 10m |
+| *Subtotal* | | | 5h 57m | 4h 10m |
+| **Non-ticketed** | | | | |
+| fix temporal hard deletes | Temporal delete audit | merged into main | 1h 8m | 1h 8m |
+| Unlabeled sessions (2) | | | 3m | 3m |
+| *Subtotal* | | | 1h 11m | 1h 11m |
+| **Total** | | | 7h 8m | 5h 21m |
+| **Reviews (not in totals)** | | | | |
+| BPZ-1412 order-pdf | MR checked against its ticket | review | 20m | 18m |
+```
+
+Ticketed = rows with a `ticket`. All `untitled: true` rows collapse into the one
+`Unlabeled sessions (N)` row, from `meta.subtotals.untitled`. Subtotals come
+from `meta.subtotals`, the total from `meta.totals`. The Reviews group holds the
+rows of `meta.reviews` and is left out when there are none. Under the table:
+`At the keyboard: Xh Ym` from `meta.totals.union_active_min`; when it is below
+the total, add "(the total sums parallel worktree sessions)".
 
 ### Flags
 

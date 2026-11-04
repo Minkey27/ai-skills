@@ -218,12 +218,18 @@ def parse_session(lines):
         if record.get("type") == "ai-title" and record.get("aiTitle"):
             ai_title = record["aiTitle"]
         timestamp = record.get("timestamp")
-        if timestamp:
+        # Only the conversation counts as activity. The harness also writes its
+        # own records, such as an `api-request` every ~16 minutes while a request
+        # hangs on a sleeping machine, which the idle cap would count in full.
+        if timestamp and record.get("type") in ("user", "assistant"):
             if cwd is None and record.get("cwd"):
                 cwd = record["cwd"]
+            branch = record.get("gitBranch")
             events.append({
                 "ts": _parse_ts(timestamp),
-                "branch": record.get("gitBranch"),
+                # A `review/X` worktree is a look at branch X: resolve scope,
+                # label and ownership against X, which outlives the worktree.
+                "branch": branch.removeprefix("review/") if branch else branch,
                 "cwd": record.get("cwd"),
             })
         if record.get("type") == "user":
@@ -309,24 +315,18 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
     unattributed = {}
     contributing_sessions = set()
     all_timestamps = []  # every in-scope, in-window event, for the union estimate
-    # Earliest-ever timestamp per subject key, in scope, regardless of window —
-    # lets us tell "worked on again today" apart from "picked up today".
-    first_seen = {}
 
     for session in sessions:
         for event in session["events"]:
             ts = event["ts"]
+            if not start <= ts <= end:
+                continue
             cwd = event.get("cwd") or session.get("cwd")
             branch = event.get("branch")
-            in_window = start <= ts <= end
             if in_scope(cwd, branch, repo_root, live_worktrees, known_branches):
                 key, label = derive_subject(
                     branch, session.get("ai_title"), ticket_prefix, session.get("session_id")
                 )
-                if key not in first_seen or ts < first_seen[key]:
-                    first_seen[key] = ts
-                if not in_window:
-                    continue
                 contributing_sessions.add(session.get("session_id"))
                 all_timestamps.append(ts)
                 agg = subjects.setdefault(key, {
@@ -348,7 +348,7 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
                 for prompt in session.get("prompts", [])[:2]:
                     if prompt not in agg["prompts"]:
                         agg["prompts"].append(prompt)
-            elif in_window and under_any(cwd, worktree_parents):
+            elif under_any(cwd, worktree_parents):
                 bucket = unattributed.setdefault((cwd, branch), {
                     "branch": branch, "cwd": cwd, "timestamps": [],
                 })
@@ -369,7 +369,6 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
             "session_count": len(agg["sessions"]),
             "first": timeline[0].isoformat(),
             "last": timeline[-1].isoformat(),
-            "started_in_window": first_seen[key] >= start,
             "titles": sorted(agg["titles"]),
             "branches": sorted(agg["branches"]),
             "prompt_samples": agg["prompts"][:4],
@@ -582,9 +581,11 @@ def _enrich_commits(report, repo_root, start_utc, end_utc, author):
         f"--since={start_utc.isoformat()}", f"--until={end_utc.isoformat()}",
         "--format=%s%x00%D",
     ])
+    subjects = []
     by_branch = {}
     for line in raw:
         subject, _, decoration = line.partition("\x00")
+        subjects.append(subject)
         for ref in re.split(r"[,\s]+", decoration):
             ref = ref.replace("origin/", "").strip()
             if ref:
@@ -592,11 +593,18 @@ def _enrich_commits(report, repo_root, start_utc, end_utc, author):
         for ref in parse_merge_branches([subject]):
             by_branch.setdefault(ref, []).append(subject)
     for row in report["subjects"]:
-        commits = []
-        for branch in row["branches"]:
-            if branch.lower() in GENERIC_BRANCHES:
-                continue
-            commits.extend(by_branch.get(branch, []))
+        ticket = row.get("ticket")
+        if ticket:
+            # A ticket's commits name it in their subject. A branch decoration
+            # only marks the tip, which moves on and is shared by stacked branches.
+            pattern = re.compile(rf"\b{re.escape(ticket)}\b", re.I)
+            commits = [s for s in subjects if pattern.search(s)]
+        else:
+            commits = []
+            for branch in row["branches"]:
+                if branch.lower() in GENERIC_BRANCHES:
+                    continue
+                commits.extend(by_branch.get(branch, []))
         unique_sorted = sorted(set(commits))
         row["commits"] = unique_sorted[:8]
         row["merged_commits"] = [c for c in unique_sorted if _MERGE_RE.match(c)]
@@ -626,7 +634,8 @@ def main(argv=None):
     window = parse_window(args.window, datetime.now(local_tz).date(), local_tz)
     live = live_worktree_paths(repo_root)
     known = build_known_branches(repo_root)
-    worktree_parents = {str(Path(p).parent) for p in live}
+    # live[0] is the primary checkout: its parent holds sibling repos, not worktrees.
+    worktree_parents = {str(Path(p).parent) for p in live[1:]}
     worktree_parents.add(str(Path(repo_root) / ".claude" / "worktrees"))
 
     sessions = []
