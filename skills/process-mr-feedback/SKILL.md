@@ -427,7 +427,7 @@ For an unattended caller: a local daemon (reviewstation) running `claude -p --pe
 | 3 | Build the 3a write-up as usual, written to `<out>/feedback.md`. No `$GITDIR` file, no prompts: the caller curates from `answers.json`. |
 | 4–5 | Don't run. Nothing is edited, committed, pushed or posted. |
 
-**The caller's answers.** The caller curates in five words, and `answers.json` speaks them. Stage 2's dispositions map onto them; `ticket` is the caller's own:
+**The caller's answers.** The caller curates in six words, and `answers.json` speaks them. Stage 2's dispositions map onto them; `ticket` and `acknowledge` are the caller's own:
 
 | Answer | Stage 2 | The caller posts | Resolves by default |
 |---|---|---|---|
@@ -436,6 +436,9 @@ For an unattended caller: a local daemon (reviewstation) running `claude -p --pe
 | `explain` | Dismiss: already handled, or doesn't apply | the reply | yes |
 | `disagree` | Push back: the reviewer is wrong | the reply | no |
 | `ask` | Defer, with a question | the reply | no |
+| `acknowledge` | none: the note asks for nothing | nothing (the reply, when I write one) | yes |
+
+**A note that asks for nothing** — praise, an FYI, a thanks: no claim about the code, no request, no question — gets `acknowledge`. There is nothing to check or to explain: `reply` is `""`, so the caller resolves the thread and posts nothing; `fix`, `real`, `sound` and `evidence` are `null`; `why` is one line saying what the note is, without the **Problem.** and **Why it bites.** labels. A note that praises and also asks or claims something isn't one: answer what it asks.
 
 **The weight steers the pick.** A `valid` thread whose `weight` is `follow-up` → `ticket`: the reviewer asked for it to be tracked, not done now. A question (the label is `question`, or the note only asks) is answered: `explain` when the code answers it, `fix` when the answer is that it's a defect, `ask` when you need more to answer.
 
@@ -458,7 +461,7 @@ For an unattended caller: a local daemon (reviewstation) running `claude -p --pe
     "ai": {
       "real": "yes|no|null",
       "sound": "yes|no|risky|null",
-      "suggest": "fix|ticket|explain|disagree|ask",
+      "suggest": "fix|ticket|explain|disagree|ask|acknowledge",
       "why": "**Problem.** …\n\n**Why it bites.** …",
       "evidence": null
     }
@@ -469,12 +472,12 @@ For an unattended caller: a local daemon (reviewstation) running `claude -p --pe
 - `cluster` — the 1c cluster's letter when the thread shares an anchor or a fix with another, else `null`. Threads in one cluster share `fix`; each keeps its own `reply`.
 - `title` — the block heading's headline.
 - `fix` — the block's **Fix.** text, without its label: the change to make, which the caller hands back in `--apply`. For `disagree` and `ask`, the reasoning or the question, as the block has it.
-- `reply` — the note the caller posts on the thread, as written (reply tone applies), after its prefix in the table above. For `fix`, one line saying what changed, without the commit; the caller posts `Updated the description: <reply>` instead when the fix is in the MR description. `ticket`: what the follow-up will cover. `explain`: why it's handled or doesn't apply. `disagree`: the technical reasoning. `ask`: the question.
+- `reply` — the note the caller posts on the thread, as written (reply tone applies), after its prefix in the table above. For `fix`, one line saying what changed, without the commit; the caller posts `Updated the description: <reply>` instead when the fix is in the MR description. `ticket`: what the follow-up will cover. `explain`: why it's handled or doesn't apply. `disagree`: the technical reasoning. `ask`: the question. `acknowledge`: `""`.
 - `ai` — what you make of the thread. The caller shows it apart from the reviewer's words and never posts it.
   - `real` — Stage 2's verdict: `valid` → `yes`, `invalid` → `no`, `needs-clarification` → `null`.
   - `sound` — when the reviewer proposed a fix: whether it works as proposed (Stage 2 task 3), `yes`, `no` or `risky`; else `null`.
-  - `suggest` — your pick of the five answers above.
-  - `why` — the block's **Problem.** and **Why it bites.** paragraphs, with their bold labels, as markdown.
+  - `suggest` — your pick of the six answers above.
+  - `why` — the block's **Problem.** and **Why it bites.** paragraphs, with their bold labels, as markdown; for `acknowledge`, one line.
   - `evidence` — what was read that shows the comment is wrong; required when `real` is `no`, else `null`.
 
 **End the turn** with one line of counts per answer — `MR !<iid>: 2 fix, 1 disagree, 1 ask → <out>`.
