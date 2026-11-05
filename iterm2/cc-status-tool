@@ -3,6 +3,7 @@
 # the session title once it stops, followed by the git branch. Also sets user.gitBranch, for a tab
 # title that shows the branch.
 in=$(cat)
+[ -n "${ITERM_SESSION_ID:-}" ] || exit 0   # not in an iTerm session (e.g. an rs job): nothing to update
 printf '%s' "$in" | ~/.config/iterm2/cc-status
 event=$(jq -r .hook_event_name <<<"$in")
 branch=$(git -C "$(jq -r .cwd <<<"$in")" branch --show-current 2>/dev/null)
