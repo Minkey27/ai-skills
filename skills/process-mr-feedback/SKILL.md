@@ -398,7 +398,7 @@ Everything reviewers can see goes out together behind **one** confirmation.
 /process-mr-feedback --headless --apply <apply.json> --mr-json <mr.json> --out <dir>
 ```
 
-For an unattended caller: a local daemon (battlestation) running `claude -p --permission-mode dontAsk` in the MR author's worktree, on the MR's source branch at the MR head. The caller fetches the threads, curates the answers, pushes, posts the replies and resolves; this mode verifies and proposes (the first form), then implements what the caller accepted (the second). Two runs, in two sessions: nothing carries over between them but the files.
+For an unattended caller: a local daemon (reviewstation) running `claude -p --permission-mode dontAsk` in the MR author's worktree, on the MR's source branch at the MR head. The caller fetches the threads, curates the answers, pushes, posts the replies and resolves; this mode verifies and proposes (the first form), then implements what the caller accepted (the second). Two runs, in two sessions: nothing carries over between them but the files.
 
 **Never ask anything.** No `AskUserQuestion`, no plain-text question that waits for a reply. A guard that fails writes nothing and ends the turn with one line, `QUESTION: <why>`.
 

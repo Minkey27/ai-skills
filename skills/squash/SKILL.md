@@ -184,7 +184,7 @@ Any `CHANGED` fails Step 4: restore `<PRE_SQUASH_REF>`.
 /squash --headless --mr-json <mr.json> --commits <commits.json> --out <dir>
 ```
 
-For an unattended caller (battlestation) landing an approved MR: it folds the MR's review fixes into the commits the MR was opened with, then pushes and merges. This mode only **plans** the fold. It never rebases, commits, moves a ref, runs `glab` or fetches: the caller runs the plan, checks the tree and pushes.
+For an unattended caller (reviewstation) landing an approved MR: it folds the MR's review fixes into the commits the MR was opened with, then pushes and merges. This mode only **plans** the fold. It never rebases, commits, moves a ref, runs `glab` or fetches: the caller runs the plan, checks the tree and pushes.
 
 **Never ask anything.** No `AskUserQuestion`, no question that waits for a reply. A stop writes nothing and ends the turn with one line, `QUESTION: <why>`.
 

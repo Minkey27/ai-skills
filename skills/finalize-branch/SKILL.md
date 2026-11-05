@@ -1,6 +1,6 @@
 ---
 name: finalize-branch
-description: Use when implementation is complete and you want to simplify, squash, open a draft MR and post the code-review findings on it as threads, the full post-implementation finalization workflow before sending work for review. The findings are answered later, outside this skill (Battle Station's My merge requests page). Pass `yolo` as an argument to skip the simplify/squash confirmation gates.
+description: Use when implementation is complete and you want to simplify, squash, open a draft MR and post the code-review findings on it as threads, the full post-implementation finalization workflow before sending work for review. The findings are answered later, outside this skill (reviewstation's My merge requests page). Pass `yolo` as an argument to skip the simplify/squash confirmation gates.
 ---
 
 # Finalize Branch
@@ -9,7 +9,7 @@ description: Use when implementation is complete and you want to simplify, squas
 
 Chains four post-implementation steps: simplify, squash, draft MR, code review posted on that MR. Clean it, squash it, open it, review it.
 
-The review findings go up unchecked, one thread per finding, on your own draft MR. Nothing here decides which to fix. Battle Station's My merge requests page treats a comment of yours that nobody answered as a thread waiting on you: Draft answers checks each one, and you pick fix, reply or ticket there.
+The review findings go up unchecked, one thread per finding, on your own draft MR. Nothing here decides which to fix. Reviewstation's My merge requests page treats a comment of yours that nobody answered as a thread waiting on you: Draft answers checks each one, and you pick fix, reply or ticket there.
 
 **Announce at start:** "I'm using the finalize-branch skill to simplify, squash, open a draft MR, and post the review findings on it." In yolo mode add: "Running in **yolo** mode: simplify and squash apply without confirmation gates."
 
@@ -329,7 +329,7 @@ echo "BASE_SHA=$BASE_SHA HEAD_SHA=$(git rev-parse HEAD)"
 
 Reviewer template: `DESCRIPTION` = what the branch built (from `git log` over the range); `PLAN_OR_REQUIREMENTS` = the plan file or ticket if one exists, otherwise say so rather than inventing requirements.
 
-**4b. One thread per finding.** Every entry under the reviewer's `Issues` becomes a thread; ignore `Strengths`, `Recommendations` and `Assessment`. Don't check, rank or drop findings here: Draft answers in Battle Station checks each one, and paying for that twice buys nothing.
+**4b. One thread per finding.** Every entry under the reviewer's `Issues` becomes a thread; ignore `Strengths`, `Recommendations` and `Assessment`. Don't check, rank or drop findings here: Draft answers in reviewstation checks each one, and paying for that twice buys nothing.
 
 Fetch the MR's identifiers and `diff_refs` once the review is back:
 
@@ -365,7 +365,7 @@ Body, with the severity from the reviewer's heading (`Critical` → `critical`, 
 
 **4c. Post.** **REQUIRED SUB-SKILL:** `posting-mr-notes`. Write the batch with the `Write` tool to `$(git rev-parse --absolute-git-dir)/review-notes.json`, or inside the scratchpad when the environment mandates one. Dry run, then the bare post command. A `FAILED` diff note goes up again as a `thread`, in a batch holding only those. A denied post follows that skill's denial path: say what was posted and ask for "post". No findings → post nothing.
 
-**4d. Report and clean up.** The MR/PR URL, the number of threads posted, and one line: answer them in Battle Station, whose poll picks them up as threads waiting on you (Fetch threads on the MR page does it now). Then remove the state file; a stale one is a hazard for the next run:
+**4d. Report and clean up.** The MR/PR URL, the number of threads posted, and one line: answer them in reviewstation, whose poll picks them up as threads waiting on you (Fetch threads on the MR page does it now). Then remove the state file; a stale one is a hazard for the next run:
 
 ```bash
 rm -f "${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
