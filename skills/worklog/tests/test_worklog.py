@@ -256,6 +256,36 @@ def test_build_report_owned_branch_stays_as_work():
     assert report["meta"]["reviews"] == []
 
 
+def test_build_owned_branches_resolves_remote_only_branch_through_origin(monkeypatch):
+    def fake_git(repo_root, args):
+        if args[:3] == ["rev-parse", "--verify", "--quiet"]:
+            return ["sha"] if args[3] == "main" else []
+        if args[0] == "for-each-ref":
+            return ["main"]  # no local BPZ-1685-x
+        if args[0] == "rev-list":
+            return ["sha"] if "origin/BPZ-1685-x" in args else []
+        return []
+
+    monkeypatch.setattr(worklog, "_git", fake_git)
+    assert worklog.build_owned_branches("/repo", "me@example.com", {"BPZ-1685-x"}) == {"BPZ-1685-x"}
+
+
+def test_build_report_splits_epic_row_over_its_own_tickets():
+    sessions = [_sess("s1", None, "/repo/wt-756", [
+        (0, "epic/nav"), (5, "epic/nav"),
+        (10, "bpz-756-x"), (14, "bpz-756-x"),
+        (20, "bpz-900-y"), (22, "bpz-900-y"),
+    ])]
+    # 1682 has no time in the window, 900 is someone else's branch
+    sessions[0]["agent_tickets"] = {"agent-a": "BPZ-756", "agent-b": "BPZ-900",
+                                    "agent-c": "BPZ-1682", "agent-d": None}
+    scope = _scope()
+    scope["owned_branches"] = {"epic/nav", "bpz-756-x"}
+    rows = {r["subject"]: r for r in worklog.build_report(sessions, **scope)["subjects"]}
+    assert rows["epic/nav"]["split_over"] == ["BPZ-756"]
+    assert rows["BPZ-756 x"]["split_over"] == []
+
+
 def test_build_report_title_row_never_a_review():
     # main/title rows aren't branch-derived, so an empty owned set can't demote them
     sessions = [_sess("s1", "T", "/repo", [(0, "main"), (5, "main")])]
@@ -288,14 +318,16 @@ def test_subagent_marks_take_ticket_from_meta_description(tmp_path):
         (agents / f"{name}.meta.json").write_text(_json.dumps({"description": description}))
         (agents / f"{name}.jsonl").write_text(_json.dumps(
             {"type": "assistant", "timestamp": _dt(minute).isoformat(), "gitBranch": "BPZ-9-noise"}))
-    assert worklog.subagent_marks(session, "BPZ") == [(_dt(0), "BPZ-1682"), (_dt(5), None)]
+    tickets = worklog.subagent_tickets(session, "BPZ")
+    assert tickets == {"agent-a": "BPZ-1682", "agent-b": None}
+    assert worklog.subagent_marks(session, tickets) == [(_dt(0), "BPZ-1682"), (_dt(5), None)]
 
 
 def test_attribute_to_subagents_moves_orchestrator_time_to_latest_agent_ticket():
     known = {"BPZ-1682-project-page-shell", "BPZ-1685-verkoop", "epic/nav"}
     marks = [(_dt(0), "BPZ-1682"), (_dt(10), None), (_dt(20), "BPZ-1999"), (_dt(30), "BPZ-1685")]
     events = [{"ts": _dt(m), "branch": "epic/nav"} for m in (-5, 2, 12, 22, 32, 60)]
-    out = worklog.attribute_to_subagents(events, marks, known)
+    out = worklog.attribute_to_subagents(events, marks, known, {})
     assert [e["branch"] for e in out] == [
         "epic/nav",                     # before any agent
         "BPZ-1682-project-page-shell",  # handling the 1682 agent
@@ -303,6 +335,21 @@ def test_attribute_to_subagents_moves_orchestrator_time_to_latest_agent_ticket()
         "epic/nav",                     # BPZ-1999 has no branch yet
         "BPZ-1685-verkoop",
         "epic/nav",                     # 30m after the last agent, past the idle cap
+    ]
+
+
+def test_attribute_to_subagents_sends_agent_worktree_time_to_that_agents_ticket():
+    known = {"BPZ-1682-project-page-shell", "BPZ-1685-verkoop", "epic/nav"}
+    marks = [(_dt(0), "BPZ-1682")]
+    agents = {"agent-a1": "BPZ-1685", "agent-b2": None}
+    events = [{"ts": _dt(m), "branch": b} for m, b in
+              [(2, "agent-a1"), (300, "agent-a1"), (2, "agent-b2"), (300, "agent-b2")]]
+    out = worklog.attribute_to_subagents(events, marks, known, agents)
+    assert [e["branch"] for e in out] == [
+        "BPZ-1685-verkoop",             # the worktree names the agent, beating time
+        "BPZ-1685-verkoop",             # no agent in reach, still that worktree
+        "BPZ-1682-project-page-shell",  # agent names no ticket, falls back to time
+        "agent-b2",
     ]
 
 
@@ -408,6 +455,22 @@ def test_suggest_hours_splits_budget_in_steps_summing_exactly():
     assert by_label["non-ticketed"]["ticket"] is None
     assert by_label["non-ticketed"]["subjects"] == ["Tooling"]
     assert "main (untitled x)" not in {s for e in out for s in e["subjects"]}
+
+
+def test_suggest_hours_spreads_split_row_over_its_tickets_by_their_minutes():
+    rows = [
+        {"subject": "epic/nav", "ticket": None, "active_min": 40.0, "untitled": False,
+         "split_over": ["BPZ-1", "BPZ-2"]},
+        {"subject": "BPZ-1 a", "ticket": "BPZ-1", "active_min": 30.0, "untitled": False},
+        {"subject": "BPZ-2 b", "ticket": "BPZ-2", "active_min": 10.0, "untitled": False},
+    ]
+    by_label = {e["label"]: e for e in worklog.suggest_hours(rows, 4.0)}
+    assert "non-ticketed" not in by_label
+    assert by_label["BPZ-1"]["active_min"] == 60.0  # 30 own + 3/4 of 40
+    assert by_label["BPZ-2"]["active_min"] == 20.0  # 10 own + 1/4 of 40
+    assert by_label["BPZ-1"]["hours"] == 3.0
+    assert by_label["BPZ-2"]["hours"] == 1.0
+    assert by_label["BPZ-1"]["subjects"] == ["epic/nav", "BPZ-1 a"]
 
 
 def test_suggest_hours_empty_when_no_budget_or_no_work():

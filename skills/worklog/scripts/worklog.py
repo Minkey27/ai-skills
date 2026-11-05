@@ -245,44 +245,57 @@ def parse_session(lines):
     }
 
 
-def subagent_marks(session_path, ticket_prefix):
-    """(timestamp, ticket) for every event of a session's subagents, by time.
+def subagent_tickets(session_path, ticket_prefix):
+    """{agent name: ticket} for a session's subagents, None when none is named.
 
     Subagents live in `<session-id>/subagents/agent-*.jsonl` beside the session
     file. The ticket comes from the agent's `.meta.json` description ("Implement
     BPZ-1682 shell"), because an agent's own gitBranch is noise in a shared epic
-    worktree. An agent that names no ticket marks its moments with None.
+    worktree. The name (`agent-<id>`) is also the branch of the agent's worktree.
     """
     if ticket_prefix:
         pattern = re.compile(rf"\b{re.escape(ticket_prefix)}-\d+", re.I)
     else:
         pattern = re.compile(r"\b[A-Z][A-Z0-9]*-\d+")
-    marks = []
+    tickets = {}
     for meta in Path(session_path).with_suffix("").glob("subagents/*.meta.json"):
         try:
             description = json.loads(meta.read_text(errors="ignore")).get("description") or ""
         except json.JSONDecodeError:
             description = ""
         match = pattern.search(description)
-        ticket = match.group(0).upper() if match else None
-        transcript = meta.with_name(meta.name.replace(".meta.json", ".jsonl"))
+        tickets[meta.name.removesuffix(".meta.json")] = match.group(0).upper() if match else None
+    return tickets
+
+
+def subagent_marks(session_path, agent_tickets):
+    """(timestamp, ticket) for every event of a session's subagents, by time.
+
+    An agent that names no ticket marks its moments with None.
+    """
+    agents_dir = Path(session_path).with_suffix("") / "subagents"
+    marks = []
+    for name, ticket in agent_tickets.items():
+        transcript = agents_dir / f"{name}.jsonl"
         if transcript.exists():
             lines = transcript.read_text(errors="ignore").splitlines()
             marks.extend((event["ts"], ticket) for event in parse_session(lines)["events"])
     return sorted(marks, key=lambda mark: mark[0])
 
 
-def attribute_to_subagents(events, marks, known_branches, cap_minutes=IDLE_CAP_MINUTES):
+def attribute_to_subagents(events, marks, known_branches, agent_tickets,
+                           cap_minutes=IDLE_CAP_MINUTES):
     """Move an orchestrator's time onto the tickets its subagents work on.
 
-    Each event goes to the ticket of the latest subagent event at or before it,
-    within the idle cap: the agent whose report the orchestrator is handling.
-    Agent time itself is never counted, it is machine time. The ticket resolves
-    to its known branch, so the row keeps its slug and its ownership. No agent in
-    reach, an agent naming no ticket, or a ticket with no branch yet leaves the
-    event where it was.
+    An event on an agent's worktree branch (`agent-<id>`) goes to that agent's
+    ticket. Any other event goes to the ticket of the latest subagent event at
+    or before it, within the idle cap: the agent whose report the orchestrator
+    is handling. Agent time itself is never counted, it is machine time. The
+    ticket resolves to its known branch, so the row keeps its slug and its
+    ownership. No agent in reach, an agent naming no ticket, or a ticket with no
+    branch yet leaves the event where it was.
     """
-    tickets = {ticket for _, ticket in marks if ticket}
+    tickets = {ticket for _, ticket in marks if ticket} | {t for t in agent_tickets.values() if t}
     branch_for = {
         ticket: next((b for b in sorted(known_branches)
                       if re.match(rf"{re.escape(ticket)}(-|$)", b, re.I)), None)
@@ -291,10 +304,13 @@ def attribute_to_subagents(events, marks, known_branches, cap_minutes=IDLE_CAP_M
     times = [ts for ts, _ in marks]
     cap = timedelta(minutes=cap_minutes)
     for event in events:
-        index = bisect.bisect_right(times, event["ts"]) - 1
-        if index < 0 or event["ts"] - times[index] > cap:
-            continue
-        branch = branch_for.get(marks[index][1])
+        ticket = agent_tickets.get(event["branch"])
+        if ticket is None:
+            index = bisect.bisect_right(times, event["ts"]) - 1
+            if index < 0 or event["ts"] - times[index] > cap:
+                continue
+            ticket = marks[index][1]
+        branch = branch_for.get(ticket)
         if branch:
             event["branch"] = branch
     return events
@@ -315,6 +331,7 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
     unattributed = {}
     contributing_sessions = set()
     all_timestamps = []  # every in-scope, in-window event, for the union estimate
+    epic_tickets = {}  # epic branch -> tickets its sessions' subagents named
 
     for session in sessions:
         for event in session["events"]:
@@ -329,6 +346,9 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
                 )
                 contributing_sessions.add(session.get("session_id"))
                 all_timestamps.append(ts)
+                if branch and branch.startswith("epic/"):
+                    epic_tickets.setdefault(branch, set()).update(
+                        t for t in session.get("agent_tickets", {}).values() if t)
                 agg = subjects.setdefault(key, {
                     "subject": label,
                     "ticket": key if is_ticket_key(key) else None,
@@ -394,6 +414,13 @@ def build_report(sessions, *, window, repo_root, live_worktrees,
     subject_rows.sort(key=lambda row: row["active_min"], reverse=True)
     review_rows.sort(key=lambda row: row["active_min"], reverse=True)
 
+    # What stays on an epic branch after attribution is work for the whole stack.
+    # It is split over the epic's tickets that have own time in the window.
+    own_tickets = {row["ticket"] for row in subject_rows if row["ticket"]}
+    for row in subject_rows:
+        named = set().union(*(epic_tickets.get(b, set()) for b in row["branches"]))
+        row["split_over"] = sorted(named & own_tickets)
+
     def _sum(rows):
         return {
             "wallclock_min": round(sum(r["wallclock_min"] for r in rows), 1),
@@ -452,15 +479,26 @@ DAY_START = "09:00"
 def suggest_hours(rows, budget_hours, step=0.25):
     """Split `budget_hours` across tickets by active-minute ratio, in `step` units.
 
-    Every ticketed row is its own entry; titled non-ticket rows fold into one
-    `non-ticketed` entry; untitled rows are left out (unknown work is assumed
-    to be spread like the known work). Largest-remainder rounding keeps the
-    entries summing exactly to the budget. Entries are laid out back to back
-    from DAY_START so each carries the `start` time to log it at.
+    Every ticketed row is its own entry; a row with `split_over` (an epic
+    branch) is spread over those tickets by their own active minutes; other
+    titled non-ticket rows fold into one `non-ticketed` entry; untitled rows are
+    left out (unknown work is assumed to be spread like the known work).
+    Largest-remainder rounding keeps the entries summing exactly to the budget.
+    Entries are laid out back to back from DAY_START so each carries the
+    `start` time to log it at.
     """
+    own = {row["ticket"]: row["active_min"] for row in rows if row["ticket"]}
     shares, subjects = {}, {}
     for row in rows:
         if row.get("untitled"):
+            continue
+        targets = row.get("split_over")
+        if targets:
+            weight = sum(own[t] for t in targets)
+            for target in targets:
+                fraction = own[target] / weight if weight else 1 / len(targets)
+                shares[target] = shares.get(target, 0.0) + row["active_min"] * fraction
+                subjects.setdefault(target, []).append(row["subject"])
             continue
         label = row["ticket"] or "non-ticketed"
         shares[label] = shares.get(label, 0.0) + row["active_min"]
@@ -542,19 +580,23 @@ def build_owned_branches(repo_root, author, known_branches):
     merged_by_user = set(parse_merge_branches(
         _git(repo_root, ["log", "--merges", f"--author={author}", "--format=%s"])
     ))
+    # A branch only on the remote (an agent pushed it, the local one was never
+    # made) resolves through `origin/`; its bare name finds nothing.
+    local = set(_git(repo_root, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]))
     owned = set()
     for branch in known_branches:
         if branch in merged_by_user:
             owned.add(branch)
             continue
+        ref = branch if branch in local else f"origin/{branch}"
         excludes = [f"^{b}" for b in base if b.replace("origin/", "") != branch]
         # (a) own commits still ahead of the mainline.
         if _git(repo_root, ["rev-list", "--max-count=1",
-                            f"--author={author}", branch, *excludes]):
+                            f"--author={author}", ref, *excludes]):
             owned.add(branch)
             continue
         # (c) nothing ahead of main -> already merged; own it iff the tip is ours.
-        tip_author = _git(repo_root, ["log", "-1", "--format=%ae", branch])
+        tip_author = _git(repo_root, ["log", "-1", "--format=%ae", ref])
         if tip_author and tip_author[0].strip() == author:
             owned.add(branch)
     return owned
@@ -644,9 +686,10 @@ def main(argv=None):
         # Only sessions active in the window: reading every agent transcript on
         # disk costs seconds and moves no time inside it.
         if any(window[0] <= event["ts"] <= window[1] for event in session["events"]):
-            marks = subagent_marks(path, ticket_prefix)
-            if marks:
-                attribute_to_subagents(session["events"], marks, known)
+            session["agent_tickets"] = subagent_tickets(path, ticket_prefix)
+            if session["agent_tickets"]:
+                marks = subagent_marks(path, session["agent_tickets"])
+                attribute_to_subagents(session["events"], marks, known, session["agent_tickets"])
         sessions.append(session)
 
     author = (_git(repo_root, ["config", "user.email"]) or

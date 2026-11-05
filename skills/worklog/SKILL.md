@@ -40,7 +40,10 @@ merge. Rows of `meta.reviews` have status `review`.
 
 A session that dispatches subagents (run-epic, reviews) has its own time moved
 onto the ticket each agent's description names, so an epic orchestrator splits
-over its tickets. The agents' own time is never counted.
+over its tickets. Time spent in an agent's worktree (`agent-<id>`) goes to that
+agent's ticket. The agents' own time is never counted. What still sits on an
+`epic/*` row is work for the whole stack: its `split_over` lists the epic's
+tickets that have own time, and `suggested_hours` spreads the row over them.
 
 ### The day
 
@@ -70,7 +73,9 @@ One row per `meta.suggested_hours` entry, in the script's order:
 | 11:45 | Generic werkvoorbereiding "temporal delete audit, tooling" | 0.5   |
 ```
 
-`Time` is `start`; `Task` is the ticket plus that row's summary phrase. The
+`Time` is `start`; `Task` is the ticket plus that row's summary phrase. A ticket
+entry whose `subjects` include an epic row carries its share of that row; the
+phrase stays the ticket's own. The
 entry with `ticket: null` renders as `Generic werkvoorbereiding "<comment>"`,
 comment built from its `subjects`. Entries with `hours` 0 leave the table and
 go beneath it as `under 15m: …`. `meta.workdays` > 1 → drop the `Time` column.
@@ -94,7 +99,9 @@ never derivable; do not invent it.
 | BPZ-1412 order-pdf | MR checked against its ticket | review | 20m | 18m |
 ```
 
-Ticketed = rows with a `ticket`. All `untitled: true` rows collapse into the one
+Ticketed = rows with a `ticket`. A row with a non-empty `split_over` stays under
+Non-ticketed with its own minutes, its Summary ending in `(split over BPZ-1, BPZ-2)`.
+All `untitled: true` rows collapse into the one
 `Unlabeled sessions (N)` row, from `meta.subtotals.untitled`. Subtotals come
 from `meta.subtotals`, the total from `meta.totals`. The Reviews group holds the
 rows of `meta.reviews` and is left out when there are none. Under the table:
