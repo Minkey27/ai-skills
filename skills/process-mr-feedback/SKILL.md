@@ -1,6 +1,6 @@
 ---
 name: process-mr-feedback
-description: "Use when processing review feedback on a GitLab merge request you have checked out — working through the unresolved discussion threads a reviewer (a human, or an automated/LLM diff-note) left on the MR. Triggers on phrases like 'process the review feedback', 'address the MR comments', 'work through the review threads', 'handle the review comments'. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't currently checked out, because it needs a working tree to verify findings and apply fixes. Supports `--dry-run`, and for unattended callers `--headless --mr-json <file> --threads <file> --out <dir>` (verify and propose: writes `feedback.md` + `answers.json`) and `--headless --apply <file> --mr-json <file> --out <dir>` (implement the accepted fixes as local commits: writes `fixes.json`); no `glab`, no questions, no push, no posts."
+description: "Use when processing review feedback on a GitLab merge request you have checked out — working through the unresolved discussion threads a reviewer (a human, or an automated/LLM diff-note) left on the MR. Triggers on phrases like 'process the review feedback', 'address the MR comments', 'work through the review threads', 'handle the review comments'. GitLab-only (requires `glab`). Refuses if the MR's source branch isn't currently checked out, because it needs a working tree to verify findings and apply fixes. Supports `--dry-run`, and for unattended callers `--headless --mr-json <file> --threads <file> --out <dir>` (verify and propose: writes `feedback.md` + `answers.json`) and `--headless --apply <file> --mr-json <file> --out <dir>` (implement the accepted fixes as local commits: writes `fixes.json`); no `glab`, no questions, no push, no GitLab posts."
 ---
 
 # process-mr-feedback
@@ -48,7 +48,7 @@ If the session exposes a project test-runner skill (e.g. `pytest-docker`), **inv
 - **No performative agreement in replies** — no "thanks" / "good catch" / "you're absolutely right".
 - **`Content-Type` header is mandatory** on `glab api ... --input -`; without it GitLab returns HTTP 415. See [references/glab-discussions.md](references/glab-discussions.md).
 - **Honor `--dry-run`** (`--dry-run`, or "dry run" in the message): build everything, write **nothing** — no edits, commit, push, or posts. Print planned fixes and reply/resolve payloads as a receipt.
-- **Honor `--headless`**: an unattended caller that curates, pushes and posts itself. No `glab`, no questions, no gate, no push, no posts; files written, then stop. Where it conflicts with a rule above, [Headless mode](#headless-mode---headless) wins.
+- **Honor `--headless`**: an unattended caller that curates, pushes and posts itself. No `glab`, no questions, no gate, no push, no posts but the ClickUp comment a `--apply` fix can be; files written, then stop. Where it conflicts with a rule above, [Headless mode](#headless-mode---headless) wins.
 
 ## Workflow
 
@@ -472,7 +472,7 @@ For an unattended caller: a local daemon (reviewstation) running `claude -p --pe
 - `cluster` — the 1c cluster's letter when the thread shares an anchor or a fix with another, else `null`. Threads in one cluster share `fix`; each keeps its own `reply`.
 - `title` — the block heading's headline.
 - `fix` — the block's **Fix.** text, without its label: the change to make, which the caller hands back in `--apply`. For `disagree` and `ask`, the reasoning or the question, as the block has it.
-- `reply` — the note the caller posts on the thread, as written (reply tone applies), after its prefix in the table above. For `fix`, one line saying what changed, without the commit; the caller posts `Updated the description: <reply>` instead when the fix is in the MR description. `ticket`: what the follow-up will cover. `explain`: why it's handled or doesn't apply. `disagree`: the technical reasoning. `ask`: the question. `acknowledge`: `""`.
+- `reply` — the note the caller posts on the thread, as written (reply tone applies), after its prefix in the table above. For `fix`, one line saying what changed, without the commit; the caller posts `Updated the description: <reply>` instead when the fix is in the MR description, and `Noted on <ticket link>: <reply>` when it is a note on a ClickUp ticket. `ticket`: what the follow-up will cover. `explain`: why it's handled or doesn't apply. `disagree`: the technical reasoning. `ask`: the question. `acknowledge`: `""`.
 - `ai` — what you make of the thread. The caller shows it apart from the reviewer's words and never posts it.
   - `real` — Stage 2's verdict: `valid` → `yes`, `invalid` → `no`, `needs-clarification` → `null`.
   - `sound` — when the reviewer proposed a fix: whether it works as proposed (Stage 2 task 3), `yes`, `no` or `risky`; else `null`.
@@ -501,6 +501,7 @@ Run Stage 4 on these and nothing else, with these differences:
 - **The pre-commit gate** runs as in Stage 4. A command the session may not run counts as `not run`, not as a failure. On a failure: commit nothing more, leave the failed fix's edits in the tree, and say which in `not_fixed`; fixes committed before it stay.
 - **Never push**, never `git reset`, `checkout`, `restore`, `stash` or `rebase`.
 - **A fix that only changes the MR description** (the comments ask to correct or extend the description, and no file needs to change) has no edit and no commit. Once the commits are made, rewrite the description from `--mr-json`'s `description`: change what the comments ask, keep the rest as written, and when it walks through the commits, add the ones this run made. Every such fix shares the one rewrite. A fix that needs code changes is an ordinary fix, even when the description should change too.
+- **A fix that is a note on a ClickUp ticket** (the comments ask a ticket to record something, and no file and not the MR description needs to change) has no edit and no commit. Find the ticket with `clickup_get_task`, then add the note as a comment on it with `clickup_create_task_comment`: that comment is the fix, and it goes to ClickUp at once. Change nothing else in ClickUp. When the comment tool isn't allowed, the fix goes in `not_fixed`, saying so.
 
 **Output** — one file, `<out>/fixes.json`, written last:
 
@@ -508,14 +509,15 @@ Run Stage 4 on these and nothing else, with these differences:
 {
   "spec": 1,
   "fixes": [{"discussion_ids": ["6a9c…", "71be…"], "sha": "1a2b3c4", "summary": "resolve user_roles via the repository"},
-            {"discussion_ids": ["4c1e…"], "description": true, "summary": "say the role comes from the repository"}],
+            {"discussion_ids": ["4c1e…"], "description": true, "summary": "say the role comes from the repository"},
+            {"discussion_ids": ["8e7f…"], "ticket": "BPZ-1500", "ticket_url": "https://app.clickup.com/t/86c1…", "summary": "record why roles come from the repository"}],
   "not_fixed": [{"discussion_ids": ["9d02…"], "reason": "tests failed: test_roles.py::test_admin"}],
   "checks": {"lint": "passed|failed|not run", "format": "passed|failed|not run", "tests": "passed|failed|not run"},
   "description": "Closes BPZ-1500\n\nThe role dropdown …"
 }
 ```
 
-Every fix in `--apply` is in `fixes` or in `not_fixed`. A fix in the description has `"description": true` and no `sha`; `description` is then the whole new MR description, as markdown, which the caller puts on the MR. Leave `description` out when no fix is in it. `summary` is the commit's one line, or the description change's, for the caller's records; the reply the caller posts comes from `answers.json`.
+Every fix in `--apply` is in `fixes` or in `not_fixed`. A fix in the description has `"description": true` and no `sha`; `description` is then the whole new MR description, as markdown, which the caller puts on the MR. Leave `description` out when no fix is in it. A fix noted in ClickUp has `ticket`, the ticket's id as the comments name it, and `ticket_url`, its ClickUp link, and no `sha`. `summary` is the commit's one line, or the description change's or the note's, for the caller's records; the reply the caller posts comes from `answers.json`.
 
 **End the turn** with `MR !<iid>: 2 fixed, 1 not fixed → <out>`.
 
