@@ -8,6 +8,7 @@ A personal collection of [Claude Code](https://docs.claude.com/en/docs/claude-co
 - **finalize-branch** — simplify, squash, and open a draft MR for the current branch (including the MR title and 200-word-budgeted description), then post the code-review findings on it as threads, to be answered outside the skill.
 - **handoff** — `/handoff` slash command: compact the current conversation into a handoff document (written to the OS temp dir) so a fresh agent can pick the work up, including a "suggested skills" section. Manual invocation only.
 - **mr-review** — `/mr-review` slash command: full review pass on the GitLab MR for the currently-checked-out branch, with per-finding verification and curated diff-note posting; findings are curated through numbered terminal prompts.
+- **posting-mr-notes** — post a batch of GitLab MR notes (diff notes, threads, replies, resolves) from one JSON file through `glab`: dry run first, then post only once the user says "post". The poster behind `finalize-branch` and `mr-review`.
 - **process-mr-feedback** — work through the open review discussion threads on the GitLab MR for the current branch: fetch them, verify each finding against the code, curate a disposition (Fix / Push back / Dismiss / Defer), then implement, push, reply, and resolve; findings are curated through numbered terminal prompts.
 - **pytest-docker** — run pytest inside the project's docker-compose backend container.
 - **rebase-on** — rebase the current branch onto `main` or the epic it is stacked on (`/rebase-on epic` finds the epic), replaying only the branch's own commits even after the epic was force-pushed, with guided conflict resolution.
@@ -58,6 +59,7 @@ Common values to set:
 | `finalize-branch` | Optional | `AI_SKILLS_MR_TOOL`, `AI_SKILLS_REVIEWERS`, `AI_SKILLS_TARGET_BRANCH`, `AI_SKILLS_TICKET_PREFIX`. Uses a tracker MCP (ClickUp/Jira/Linear) for ticket intent if one is installed, otherwise skips that lookup. |
 | `handoff` | No | `git` + a writable OS temp dir (`$TMPDIR`, falling back to `/tmp`) |
 | `mr-review` | Required | `AI_SKILLS_MR_TOOL=glab` (GitLab-only); `AI_SKILLS_TICKET_PREFIX` is optional. Skill also leverages a tracker MCP (ClickUp/Jira/Linear) if one is installed, otherwise skips the ticket step. |
+| `posting-mr-notes` | No | `glab` (GitLab-only) + Python stdlib, plus an allow rule for its script (see [MR note posting](#mr-note-posting)) |
 | `process-mr-feedback` | Required | `AI_SKILLS_MR_TOOL=glab` (GitLab-only). `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, `AI_SKILLS_TEST_CMD`, `AI_SKILLS_COMMIT_TRAILER` are optional (each step is skipped when its variable is empty; a project test-runner skill is preferred over `AI_SKILLS_TEST_CMD` when present). |
 | `pytest-docker` | Optional | `AI_SKILLS_BACKEND_SERVICE` (default `backend`); only useful if you run pytest in docker-compose |
 | `rebase-on` | Optional | `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, `AI_SKILLS_TYPECHECK_CMD`, `AI_SKILLS_MIGRATIONS_PATH`, `AI_SKILLS_ALEMBIC_CMD` (each step is skipped when its variable is empty). Finds the target from the MR through `glab` + `jq` when you name none |
@@ -84,6 +86,14 @@ This symlinks every skill in `skills/` into `~/.claude/skills/`. Existing entrie
 
 ```sh
 ln -s "$PWD/skills/<name>" ~/.claude/skills/<name>
+```
+
+### MR note posting
+
+`posting-mr-notes` sends every post through one script, so one allow rule in `~/.claude/settings.json` lets a post run without a permission prompt. Write your home directory out in full. The permission check matches the command text and does not expand `~` or `$HOME`.
+
+```json
+"permissions": { "allow": ["Bash(python3 /Users/<you>/.claude/skills/posting-mr-notes/scripts/post_notes.py:*)"] }
 ```
 
 ### Status line
