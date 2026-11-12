@@ -5,14 +5,14 @@ A personal collection of [Claude Code](https://docs.claude.com/en/docs/claude-co
 ## Skills included
 
 - **branch-test-review** — generate a styled HTML report of pytest tests added/modified on the current branch.
-- **finalize-branch** — simplify, squash, and open a draft MR for the current branch (including the MR title and 200-word-budgeted description), then post the code-review findings on it as threads, to be answered outside the skill.
+- **finalize-branch** — simplify, squash, and open a draft MR for the current branch (including the MR title and 200-word-budgeted description). Reviewstation then self-reviews the draft and posts the findings on it as threads.
 - **handoff** — `/handoff` slash command: compact the current conversation into a handoff document (written to the OS temp dir) so a fresh agent can pick the work up, including a "suggested skills" section. Manual invocation only.
 - **mr-review** — `/mr-review` slash command: full review pass on the GitLab MR for the currently-checked-out branch, with per-finding verification and curated diff-note posting; findings are curated through numbered terminal prompts.
-- **posting-mr-notes** — post a batch of GitLab MR notes (diff notes, threads, replies, resolves) from one JSON file through `glab`: dry run first, then post only once the user says "post". The poster behind `finalize-branch` and `mr-review`.
+- **posting-mr-notes** — post a batch of GitLab MR notes (diff notes, threads, replies, resolves) from one JSON file through `glab`: dry run first, then post only once the user says "post". The poster behind `mr-review`.
 - **process-mr-feedback** — work through the open review discussion threads on the GitLab MR for the current branch: fetch them, verify each finding against the code, curate a disposition (Fix / Push back / Dismiss / Defer), then implement, push, reply, and resolve; findings are curated through numbered terminal prompts.
 - **pytest-docker** — run pytest inside the project's docker-compose backend container.
 - **rebase-on** — rebase the current branch onto `main` or the epic it is stacked on (`/rebase-on epic` finds the epic), replaying only the branch's own commits even after the epic was force-pushed, with guided conflict resolution.
-- **requesting-code-review** — dispatch one read-only reviewer subagent over a git range (plan fit and code quality, plus a correctness bug hunt); the review step behind `finalize-branch` and `mr-review`, and usable alone (e.g. on a GitHub PR). Adapted from [superpowers](https://github.com/obra/superpowers) (MIT).
+- **requesting-code-review** — dispatch one read-only reviewer subagent over a git range (plan fit and code quality, plus a correctness bug hunt); the review step behind `mr-review`, and usable alone (e.g. on a GitHub PR). Adapted from [superpowers](https://github.com/obra/superpowers) (MIT).
 - **squash** — reorganize messy or fixup commits into clean logical commits.
 - **worklog** — reconstruct what you worked on in a time window from Claude Code session transcripts + git history; renders a `Subject | Summary | Wallclock | Active estimate` table to help log hours. Reports only; no config required (`AI_SKILLS_TICKET_PREFIX` optionally improves ticket labeling).
 

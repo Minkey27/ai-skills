@@ -114,7 +114,7 @@ rather than just naming it. Typical picks:
 | Situation | Skill |
 |---|---|
 | Any test run | the project's test-runner skill (e.g. `pytest-docker`) |
-| Work is finished, needs review + MR | `finalize-branch` |
+| Work is finished, needs a draft MR | `finalize-branch` |
 | Rebasing / squashing before review | `rebase-on`, `squash` |
 | Review feedback waiting on an MR | `process-mr-feedback` |
 

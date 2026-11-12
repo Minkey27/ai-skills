@@ -1,17 +1,17 @@
 ---
 name: finalize-branch
-description: Use when implementation is complete and you want to simplify, squash, open a draft MR and post the code-review findings on it as threads, the full post-implementation finalization workflow before sending work for review. The findings are answered later, outside this skill (reviewstation's My merge requests page). Pass `yolo` as an argument to skip the simplify/squash confirmation gates.
+description: Use when implementation is complete and you want to simplify, squash and open a draft MR, the full post-implementation finalization workflow before sending work for review. The review comes after, outside this skill: reviewstation self-reviews the new draft and posts the findings on it as threads. Pass `yolo` as an argument to skip the simplify/squash confirmation gates.
 ---
 
 # Finalize Branch
 
 ## Overview
 
-Chains four post-implementation steps: simplify, squash, draft MR, code review posted on that MR. Clean it, squash it, open it, review it.
+Chains three post-implementation steps: simplify, squash, draft MR. Clean it, squash it, open it.
 
-The review findings go up unchecked, one thread per finding, on your own draft MR. Nothing here decides which to fix. Reviewstation's My merge requests page treats a comment of yours that nobody answered as a thread waiting on you: Draft answers checks each one, and you pick fix, reply or ticket there.
+The review is not part of this skill. Reviewstation's poll finds the new draft MR, self-reviews it, and posts the findings on it, one thread per finding (its outgoing auto-review). Its My merge requests page then treats them as threads waiting on you: Draft answers checks each one, and you pick fix, reply or ticket there.
 
-**Announce at start:** "I'm using the finalize-branch skill to simplify, squash, open a draft MR, and post the review findings on it." In yolo mode add: "Running in **yolo** mode: simplify and squash apply without confirmation gates."
+**Announce at start:** "I'm using the finalize-branch skill to simplify, squash and open a draft MR." In yolo mode add: "Running in **yolo** mode: simplify and squash apply without confirmation gates."
 
 ## Arguments
 
@@ -76,14 +76,12 @@ digraph finalize {
     squash [label="Step 2: Squash\n(yolo: takes squash's recommended grouping)"];
     gate2 [label="User confirms\n(skipped in yolo)" shape=diamond];
     mr [label="Step 3: Create draft MR"];
-    review [label="Step 4: requesting-code-review"];
-    post [label="Post one thread per finding"];
     done [label="Done" shape=doublecircle];
 
     preflight -> simplify -> suite -> gate1;
     gate1 -> squash [label="proceed"];
     squash -> gate2 -> mr [label="proceed"];
-    mr -> review -> post -> done;
+    mr -> done;
 }
 ```
 
@@ -118,7 +116,7 @@ check still happens; only the gate is skipped.
 
 One path for GitHub and GitLab; only the final create/update command differs on `${AI_SKILLS_MR_TOOL:-gh}`.
 
-**State across blocks.** Each fenced `bash` block is a separate Bash invocation — variables don't survive, files do. Two values can't be re-derived later (`$UPSTREAM_SHA` must be read *before* 3a's fetch; `$TARGET` may have been settled by the user), so 3a writes them to a state file every later block re-sources, through the end of Step 4:
+**State across blocks.** Each fenced `bash` block is a separate Bash invocation — variables don't survive, files do. Two values can't be re-derived later (`$UPSTREAM_SHA` must be read *before* 3a's fetch; `$TARGET` may have been settled by the user), so 3a writes them to a state file every later block re-sources, through the end of Step 3:
 
 ```bash
 STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
@@ -313,59 +311,7 @@ echo "open MRs on $BRANCH: ${OPEN:-none}"
 
 - **Two or more** → **stop.** Update nothing; ask which IID, listing them.
 
-Go on to Step 4 with the MR/PR URL in hand.
-
-### Step 4: Review and post
-
-No gate before it. Posting every finding is this step's whole job, so the run itself is the ask to post (the exception in `posting-mr-notes` step 3). On `gh` there is no thread workflow to hand off to: print the review as the closing report and skip 4b and 4c.
-
-**4a. Review.** **REQUIRED SUB-SKILL:** `requesting-code-review` over `$BASE_SHA..HEAD`. `$BASE_SHA` is the merge-base with the target settled in 3a, so a branch stacked on an epic is reviewed against the epic.
-
-```bash
-STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
-. "$STATE"
-echo "BASE_SHA=$BASE_SHA HEAD_SHA=$(git rev-parse HEAD)"
-```
-
-Reviewer template: `DESCRIPTION` = what the branch built (from `git log` over the range); `PLAN_OR_REQUIREMENTS` = the plan file or ticket if one exists, otherwise say so rather than inventing requirements.
-
-**4b. One thread per finding.** Every entry under the reviewer's `Issues` becomes a thread; ignore `Strengths`, `Recommendations` and `Assessment`. Don't check, rank or drop findings here: Draft answers in reviewstation checks each one, and paying for that twice buys nothing.
-
-Fetch the MR's identifiers and `diff_refs` once the review is back:
-
-```bash
-STATE="${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
-. "$STATE"
-
-IID=$(glab api "projects/:id/merge_requests?source_branch=$BRANCH&state=opened" \
-  | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['iid'])")
-glab api "projects/:id/merge_requests/$IID" | python3 -c "
-import json, sys
-m = json.load(sys.stdin)
-print('project', m['project_id'], 'iid', m['iid'], m['web_url'])
-print('diff_refs', json.dumps(m['diff_refs']))"
-echo "HEAD $(git rev-parse HEAD)"
-```
-
-`diff_refs.head_sha` must equal `HEAD`. When it doesn't, GitLab is still processing the push; fetch again.
-
-A finding cited on an **added** line goes up as a `diff` note: run `git diff -U0 <diff_refs.base_sha>..HEAD -- <file>`, and the line is added when a hunk header `@@ -a,b +c,d @@` has `c <= line < c+d`. Its position is `position_type: "text"`, the three `diff_refs` SHAs, `new_path`/`old_path`, `new_line`, `old_line: null`. Every other finding (a context or removed line, or no line at all) goes up as a `thread` with no position. GitLab refuses a context line outside the hunks it renders, and a thread always posts.
-
-Body, with the severity from the reviewer's heading (`Critical` → `critical`, `Important` → `medium`, `Minor` → `low`, style → `nit`). The anchor line appears only in a `thread`, where no position carries it:
-
-```markdown
-**medium: duplicate Afdeling enum**
-
-`services.py:120`
-
-<what the reviewer says is wrong>
-
-**Fix.** <what the reviewer suggests>
-```
-
-**4c. Post.** **REQUIRED SUB-SKILL:** `posting-mr-notes`. Write the batch with the `Write` tool to `$(git rev-parse --absolute-git-dir)/review-notes.json`, or inside the scratchpad when the environment mandates one. Dry run, then the bare post command. A `FAILED` diff note goes up again as a `thread`, in a batch holding only those. A denied post follows that skill's denial path: say what was posted and ask for "post". No findings → post nothing.
-
-**4d. Report and clean up.** The MR/PR URL, the number of threads posted, and one line: answer them in reviewstation, whose poll picks them up as threads waiting on you (Fetch threads on the MR page does it now). Then remove the state file; a stale one is a hazard for the next run:
+**3f. Report and clean up.** The MR/PR URL, and one line: reviewstation's poll finds the draft, self-reviews it and posts the findings on it as threads to answer there (Poll now does it at once). Then remove the state file; a stale one is a hazard for the next run:
 
 ```bash
 rm -f "${MR_STATE:-$(git rev-parse --git-path mr-state.sh)}"
@@ -385,5 +331,3 @@ Each rule in the body carries its reason there. These are the ones it does not s
 
 - **simplify** (code-simplifier) — Step 1
 - **squash** — Step 2
-- **requesting-code-review** — Step 4 finder
-- **posting-mr-notes** — Step 4 poster

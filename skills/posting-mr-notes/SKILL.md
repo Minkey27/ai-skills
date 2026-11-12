@@ -19,8 +19,6 @@ The auto mode classifier judges a post on two things: **did the user just ask fo
    Check anchors and body text in the output.
 3. **Check the authorization predicate.** Posting is allowed only when the user's most recent chat message tells you to post this batch ("post it", "go", "post F2 and F4").
 
-   One standing exception: a `/finalize-branch` run is the ask for its own review threads on the user's own MR, since posting them is that skill's last step.
-
    Otherwise, end the turn with the receipt table and one line: `Reply "post" to send N notes to MR !<iid>.` A `y` to a different question (push, commit), a subagent's hand-back and a gate that timed out or was closed are not authorization.
 4. **Post with one bare command, alone in its Bash call:**
    `python3 <home>/.claude/skills/posting-mr-notes/scripts/post_notes.py /abs/batch.json`
