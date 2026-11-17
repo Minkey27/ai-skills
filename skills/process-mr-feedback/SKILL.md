@@ -491,8 +491,16 @@ For an unattended caller: a local daemon (reviewstation) running `claude -p --pe
   "discussion_ids": ["6a9c…", "71be…"],
   "comments": ["This rewrites user_roles on every request.", "Same in the admin view."],
   "fix": "Resolve the role through the repository instead of the transient form value."
-}]}
+}, {
+  "discussion_ids": ["5b3a…"],
+  "comments": ["Does the admin view read the repository too?"],
+  "fix": "Commit 1a2b3c4 fixed this, but the answer falls short. Still to do: say in the reply that the admin view reads the repository too.",
+  "reply": "Roles now come from the repository."
+}],
+ "description": "Closes BPZ-1500\n\nThe role dropdown …"}
 ```
+
+A fix with `reply` was made before, and a check of its answer found it falling short: `fix` says what still needs doing, which can be a code change, a change to the description, or only a better reply, and `reply` is the answer's reply as it stands. Such a fix answers one thread. `description`, when there, is the MR description as earlier fixes rewrote it, not on GitLab yet.
 
 Run Stage 4 on these and nothing else, with these differences:
 
@@ -500,8 +508,9 @@ Run Stage 4 on these and nothing else, with these differences:
 - **One commit per fix**, in `--apply` order, message `fix: <what the comments asked for>` (plus `$AI_SKILLS_COMMIT_TRAILER`). Record the short sha per fix.
 - **The pre-commit gate** runs as in Stage 4. A command the session may not run counts as `not run`, not as a failure. On a failure: commit nothing more, leave the failed fix's edits in the tree, and say which in `not_fixed`; fixes committed before it stay.
 - **Never push**, never `git reset`, `checkout`, `restore`, `stash` or `rebase`.
-- **A fix that only changes the MR description** (the comments ask to correct or extend the description, and no file needs to change) has no edit and no commit. Once the commits are made, rewrite the description from `--mr-json`'s `description`: change what the comments ask, keep the rest as written, and when it walks through the commits, add the ones this run made. Every such fix shares the one rewrite. A fix that needs code changes is an ordinary fix, even when the description should change too.
+- **A fix that only changes the MR description** (the comments ask to correct or extend the description, and no file needs to change) has no edit and no commit. Once the commits are made, rewrite the description from `--apply`'s `description`, or `--mr-json`'s when `--apply` has none: change what the comments ask, keep the rest as written, and when it walks through the commits, add the ones this run made. Every such fix shares the one rewrite. A fix that needs code changes is an ordinary fix, even when the description should change too.
 - **A fix that is a note on a ClickUp ticket** (the comments ask a ticket to record something, and no file and not the MR description needs to change) has no edit and no commit. Find the ticket with `clickup_get_task`, then add the note as a comment on it with `clickup_create_task_comment`: that comment is the fix, and it goes to ClickUp at once. Change nothing else in ClickUp. When the comment tool isn't allowed, the fix goes in `not_fixed`, saying so.
+- **A fix made before** (it has `reply`) does what `fix` says still needs doing, on top of what is there: a code change is a new commit, as above; a change to the description goes in the rewrite, as a fix in the description; when only the reply falls short, nothing is edited or committed. Then write the reply again: the one given, changed where `fix` says, and saying what a new commit changes. It reads as the given one does: after its prefix, without the commit, and the reply tone applies.
 
 **Output** — one file, `<out>/fixes.json`, written last:
 
@@ -510,14 +519,15 @@ Run Stage 4 on these and nothing else, with these differences:
   "spec": 1,
   "fixes": [{"discussion_ids": ["6a9c…", "71be…"], "sha": "1a2b3c4", "summary": "resolve user_roles via the repository"},
             {"discussion_ids": ["4c1e…"], "description": true, "summary": "say the role comes from the repository"},
-            {"discussion_ids": ["8e7f…"], "ticket": "BPZ-1500", "ticket_url": "https://app.clickup.com/t/86c1…", "summary": "record why roles come from the repository"}],
+            {"discussion_ids": ["8e7f…"], "ticket": "BPZ-1500", "ticket_url": "https://app.clickup.com/t/86c1…", "summary": "record why roles come from the repository"},
+            {"discussion_ids": ["5b3a…"], "reply": "Roles now come from the repository, in the admin view too.", "summary": "say the admin view reads the repository too"}],
   "not_fixed": [{"discussion_ids": ["9d02…"], "reason": "tests failed: test_roles.py::test_admin"}],
   "checks": {"lint": "passed|failed|not run", "format": "passed|failed|not run", "tests": "passed|failed|not run"},
   "description": "Closes BPZ-1500\n\nThe role dropdown …"
 }
 ```
 
-Every fix in `--apply` is in `fixes` or in `not_fixed`. A fix in the description has `"description": true` and no `sha`; `description` is then the whole new MR description, as markdown, which the caller puts on the MR. Leave `description` out when no fix is in it. A fix noted in ClickUp has `ticket`, the ticket's id as the comments name it, and `ticket_url`, its ClickUp link, and no `sha`. `summary` is the commit's one line, or the description change's or the note's, for the caller's records; the reply the caller posts comes from `answers.json`.
+Every fix in `--apply` is in `fixes` or in `not_fixed`. A fix in the description has `"description": true` and no `sha`; `description` is then the whole new MR description, as markdown, which the caller puts on the MR. Leave `description` out when no fix is in it. A fix noted in ClickUp has `ticket`, the ticket's id as the comments name it, and `ticket_url`, its ClickUp link, and no `sha`. `summary` is the commit's one line, or the description change's or the note's, for the caller's records; the reply the caller posts comes from `answers.json`. A fix made before also has `reply`, the reply written again, and only `reply` when nothing but the reply changed; no other fix has `reply`.
 
 **End the turn** with `MR !<iid>: 2 fixed, 1 not fixed → <out>`.
 
