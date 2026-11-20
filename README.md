@@ -12,6 +12,7 @@ A personal collection of [Claude Code](https://docs.claude.com/en/docs/claude-co
 - **process-mr-feedback** — work through the open review discussion threads on the GitLab MR for the current branch: fetch them, verify each finding against the code, curate a disposition (Fix / Push back / Dismiss / Defer), then implement, push, reply, and resolve; findings are curated through numbered terminal prompts.
 - **pytest-docker** — run pytest inside the project's docker-compose backend container.
 - **rebase-on** — rebase the current branch onto `main` or the epic it is stacked on (`/rebase-on epic` finds the epic), replaying only the branch's own commits even after the epic was force-pushed, with guided conflict resolution.
+- **renovate-mr-check** — judge a Renovate MR's dependency bump: the release notes for the whole range against what our code uses and what asserts it, then a verdict (safe, sandbox warranted, blocked); from a terminal it approves the ones it clears. `--headless` writes the verdict as findings for reviewstation, which bundles it for the Renovate bot's MRs.
 - **requesting-code-review** — dispatch one read-only reviewer subagent over a git range (plan fit and code quality, plus a correctness bug hunt); the review step behind `mr-review`, and usable alone (e.g. on a GitHub PR). Adapted from [superpowers](https://github.com/obra/superpowers) (MIT).
 - **squash** — reorganize messy or fixup commits into clean logical commits.
 - **worklog** — reconstruct what you worked on in a time window from Claude Code session transcripts + git history; renders a `Subject | Summary | Wallclock | Active estimate` table to help log hours. Reports only; no config required (`AI_SKILLS_TICKET_PREFIX` optionally improves ticket labeling).
@@ -20,7 +21,7 @@ Each skill is a directory under [`skills/`](./skills) containing a `SKILL.md` (a
 
 ## Configuration
 
-Five skills (`finalize-branch`, `mr-review`, `process-mr-feedback`, `pytest-docker`, `rebase-on`) accept per-project values through environment variables. The rest work out of the box.
+Six skills (`finalize-branch`, `mr-review`, `process-mr-feedback`, `pytest-docker`, `rebase-on`, `renovate-mr-check`) accept per-project values through environment variables. The rest work out of the box.
 
 ```sh
 mkdir -p ~/.config/ai-skills
@@ -63,6 +64,7 @@ Common values to set:
 | `process-mr-feedback` | Required | `AI_SKILLS_MR_TOOL=glab` (GitLab-only). `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, `AI_SKILLS_TEST_CMD`, `AI_SKILLS_COMMIT_TRAILER` are optional (each step is skipped when its variable is empty; a project test-runner skill is preferred over `AI_SKILLS_TEST_CMD` when present). |
 | `pytest-docker` | Optional | `AI_SKILLS_BACKEND_SERVICE` (default `backend`); only useful if you run pytest in docker-compose |
 | `rebase-on` | Optional | `AI_SKILLS_LINT_CMD`, `AI_SKILLS_FORMAT_CMD`, `AI_SKILLS_TYPECHECK_CMD`, `AI_SKILLS_MIGRATIONS_PATH`, `AI_SKILLS_ALEMBIC_CMD` (each step is skipped when its variable is empty). Finds the target from the MR through `glab` + `jq` when you name none |
+| `renovate-mr-check` | Optional | `glab` (GitLab-only) + Python stdlib. `AI_SKILLS_RENOVATE_USER` narrows the MR list and the gate to that author; without it, any MR on a `renovate/` branch |
 | `requesting-code-review` | No | `git` |
 | `worklog` | Optional | `AI_SKILLS_TICKET_PREFIX` (labeling only); otherwise `git` + Python stdlib. Scans `~/.claude/projects`. |
 
